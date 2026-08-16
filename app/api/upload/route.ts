@@ -1,4 +1,5 @@
 import { ensureSchema, getPlatformEnv, requestIdentity } from "@/db/runtime";
+import { googleDriveStatus, uploadKnowledgeToDrive } from "@/lib/google-drive";
 import { extractText, getDocumentProxy } from "unpdf";
 
 export const runtime = "edge";
@@ -43,7 +44,7 @@ function parseCsv(value: string) {
 }
 
 function makeChunks(value: string) {
-  const text = value.replace(/\u0000/g, "").replace(/\n{3,}/g, "\n\n").trim().slice(0, MAX_TEXT);
+  const text = value.split("\u0000").join("").replace(/\n{3,}/g, "\n\n").trim().slice(0, MAX_TEXT);
   const chunks: string[] = [];
   const size = 1400;
   const overlap = 180;
@@ -52,6 +53,49 @@ function makeChunks(value: string) {
     if (chunk) chunks.push(chunk);
   }
   return chunks;
+}
+
+async function saveSearchIndex(args: {
+  id: string;
+  fileName: string;
+  fileType: "csv" | "pdf";
+  objectKey: string;
+  byteSize: number;
+  pageCount: number | null;
+  rowCount: number | null;
+  chunks: string[];
+  ownerId: string;
+  ownerEmail: string;
+  createdAt: number;
+}) {
+  const DB = await ensureSchema();
+  await DB.prepare(`INSERT INTO knowledge_documents (
+    id, file_name, file_type, object_key, byte_size, page_count, row_count,
+    chunk_count, status, owner_id, owner_email, created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?)`)
+    .bind(
+      args.id,
+      args.fileName,
+      args.fileType,
+      args.objectKey,
+      args.byteSize,
+      args.pageCount,
+      args.rowCount,
+      args.chunks.length,
+      args.ownerId,
+      args.ownerEmail,
+      args.createdAt,
+    )
+    .run();
+  for (let start = 0; start < args.chunks.length; start += 80) {
+    await DB.batch(
+      args.chunks.slice(start, start + 80).map((content, offset) =>
+        DB.prepare(`INSERT INTO knowledge_chunks (id, document_id, chunk_index, content, created_at)
+          VALUES (?, ?, ?, ?, ?)`)
+          .bind(crypto.randomUUID(), args.id, start + offset, content, args.createdAt),
+      ),
+    );
+  }
 }
 
 export async function POST(request: Request) {
@@ -86,30 +130,71 @@ export async function POST(request: Request) {
 
     const identity = requestIdentity(request);
     const platformEnv = getPlatformEnv();
-    const DB = await ensureSchema();
-    if (!platformEnv.KNOWLEDGE_FILES) throw new Error("檔案儲存空間尚未連線");
     const id = crypto.randomUUID();
-    const objectKey = `knowledge/${id}/${file.name.replace(/[^\p{L}\p{N}._-]+/gu, "-")}`;
-    await platformEnv.KNOWLEDGE_FILES.put(objectKey, buffer, {
-      httpMetadata: { contentType: file.type || (fileType === "pdf" ? "application/pdf" : "text/csv") },
-      customMetadata: { ownerId: identity.id, originalName: file.name },
-    });
-
+    const mimeType = file.type || (fileType === "pdf" ? "application/pdf" : "text/csv");
     const now = Date.now();
-    await DB.prepare(`INSERT INTO knowledge_documents (
-      id, file_name, file_type, object_key, byte_size, page_count, row_count,
-      chunk_count, status, owner_id, owner_email, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?)`)
-      .bind(id, file.name, fileType, objectKey, file.size, pageCount, rowCount, chunks.length, identity.id, identity.email, now)
-      .run();
-    for (let start = 0; start < chunks.length; start += 80) {
-      await DB.batch(
-        chunks.slice(start, start + 80).map((content, offset) =>
-          DB.prepare(`INSERT INTO knowledge_chunks (id, document_id, chunk_index, content, created_at)
-            VALUES (?, ?, ?, ?, ?)`)
-            .bind(crypto.randomUUID(), id, start + offset, content, now),
-        ),
-      );
+    let storage: "google-drive" | "r2";
+    let objectKey: string;
+    let driveFileId: string | null = null;
+    let databaseIndexed = false;
+
+    if (googleDriveStatus(platformEnv).configured) {
+      const driveUpload = await uploadKnowledgeToDrive({
+        id,
+        fileName: file.name,
+        fileType,
+        mimeType,
+        buffer,
+        pageCount,
+        rowCount,
+        chunks,
+      });
+      storage = "google-drive";
+      driveFileId = driveUpload.original.id;
+      objectKey = `gdrive:${driveFileId}`;
+      try {
+        await saveSearchIndex({
+          id,
+          fileName: file.name,
+          fileType,
+          objectKey,
+          byteSize: file.size,
+          pageCount,
+          rowCount,
+          chunks,
+          ownerId: identity.id,
+          ownerEmail: identity.email,
+          createdAt: now,
+        });
+        databaseIndexed = true;
+      } catch {
+        // Google Drive 的索引檔本身可供 Render 查詢，D1 僅作 Sites 的加速副本。
+      }
+    } else {
+      if (!platformEnv.KNOWLEDGE_FILES) {
+        const state = googleDriveStatus(platformEnv);
+        throw new Error(`檔案儲存空間尚未連線；Google Drive 尚缺：${state.missing.join("、")}`);
+      }
+      storage = "r2";
+      objectKey = `knowledge/${id}/${file.name.replace(/[^\p{L}\p{N}._-]+/gu, "-")}`;
+      await platformEnv.KNOWLEDGE_FILES.put(objectKey, buffer, {
+        httpMetadata: { contentType: mimeType },
+        customMetadata: { ownerId: identity.id, originalName: file.name },
+      });
+      await saveSearchIndex({
+        id,
+        fileName: file.name,
+        fileType,
+        objectKey,
+        byteSize: file.size,
+        pageCount,
+        rowCount,
+        chunks,
+        ownerId: identity.id,
+        ownerEmail: identity.email,
+        createdAt: now,
+      });
+      databaseIndexed = true;
     }
     return Response.json({
       id,
@@ -119,6 +204,9 @@ export async function POST(request: Request) {
       pageCount,
       chunkCount: chunks.length,
       status: "ready",
+      storage,
+      driveFileId,
+      databaseIndexed,
     }, { status: 201 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "檔案匯入失敗" }, { status: 500 });

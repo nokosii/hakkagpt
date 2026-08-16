@@ -22,6 +22,11 @@ const localBindingConfig = {
     HAKKAGPT_USER_ID:
       process.env.HAKKAGPT_USER_ID || "ketiengong-platform",
     REVIEWER_EMAILS: process.env.REVIEWER_EMAILS || "",
+    GOOGLE_DRIVE_FOLDER_ID:
+      process.env.GOOGLE_DRIVE_FOLDER_ID || "1AQ8NQBgruJlb6bYQMVUOPvJPZ0olKFUd",
+    GOOGLE_DRIVE_CLIENT_ID: process.env.GOOGLE_DRIVE_CLIENT_ID || "",
+    GOOGLE_DRIVE_CLIENT_SECRET: process.env.GOOGLE_DRIVE_CLIENT_SECRET || "",
+    GOOGLE_DRIVE_REFRESH_TOKEN: process.env.GOOGLE_DRIVE_REFRESH_TOKEN || "",
   },
   d1_databases: d1
     ? [

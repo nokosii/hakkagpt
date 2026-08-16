@@ -1,4 +1,5 @@
 import { ensureSchema } from "@/db/runtime";
+import { loadDriveKnowledgeIndexes } from "@/lib/google-drive";
 
 export type KnowledgeSource = {
   id: string;
@@ -51,17 +52,29 @@ function relevance(question: string, title: string, content: string): number {
 }
 
 export async function retrieveKnowledge(question: string) {
-  const DB = await ensureSchema();
-  const revisionsResult = await DB.prepare(`SELECT id, term, slug, summary, content,
-      source_url, status, created_at
-    FROM knowledge_revisions
-    WHERE status IN ('pending', 'approved')
-    ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC
-    LIMIT 160`).all<RevisionRow>();
-
   const chosenBySlug = new Map<string, RevisionRow>();
-  for (const row of revisionsResult.results || []) {
-    if (!chosenBySlug.has(row.slug)) chosenBySlug.set(row.slug, row);
+  const databaseChunks: ChunkRow[] = [];
+  try {
+    const DB = await ensureSchema();
+    const revisionsResult = await DB.prepare(`SELECT id, term, slug, summary, content,
+        source_url, status, created_at
+      FROM knowledge_revisions
+      WHERE status IN ('pending', 'approved')
+      ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC
+      LIMIT 160`).all<RevisionRow>();
+    for (const row of revisionsResult.results || []) {
+      if (!chosenBySlug.has(row.slug)) chosenBySlug.set(row.slug, row);
+    }
+
+    const chunkResult = await DB.prepare(`SELECT c.id, d.file_name, c.content, c.created_at
+      FROM knowledge_chunks c
+      JOIN knowledge_documents d ON d.id = c.document_id
+      WHERE d.status = 'ready'
+      ORDER BY c.created_at DESC
+      LIMIT 240`).all<ChunkRow>();
+    databaseChunks.push(...(chunkResult.results || []));
+  } catch {
+    // Render 可直接從 Google Drive 索引取得文件內容，D1 不可用時不阻斷查詢。
   }
 
   const revisionSources: KnowledgeSource[] = [...chosenBySlug.values()].map((row) => ({
@@ -75,14 +88,7 @@ export async function retrieveKnowledge(question: string) {
       (row.status === "pending" ? 2 : 0),
   }));
 
-  const chunkResult = await DB.prepare(`SELECT c.id, d.file_name, c.content, c.created_at
-    FROM knowledge_chunks c
-    JOIN knowledge_documents d ON d.id = c.document_id
-    WHERE d.status = 'ready'
-    ORDER BY c.created_at DESC
-    LIMIT 240`).all<ChunkRow>();
-
-  const chunkSources: KnowledgeSource[] = (chunkResult.results || []).map((row) => ({
+  const chunkSources: KnowledgeSource[] = databaseChunks.map((row) => ({
     id: row.id,
     title: row.file_name,
     kind: "document",
@@ -91,7 +97,31 @@ export async function retrieveKnowledge(question: string) {
     score: relevance(question, row.file_name, row.content),
   }));
 
-  const ranked = [...revisionSources, ...chunkSources]
+  try {
+    const driveIndexes = await loadDriveKnowledgeIndexes();
+    for (const index of driveIndexes) {
+      index.chunks.forEach((content, chunkIndex) => {
+        chunkSources.push({
+          id: `drive-${index.knowledgeId}-${chunkIndex}`,
+          title: index.fileName,
+          kind: "document",
+          status: "ready",
+          excerpt: content,
+          score: relevance(question, index.fileName, content),
+        });
+      });
+    }
+  } catch {
+    // Drive 暫時無法讀取時，仍可使用共編詞條與 D1 既有片段。
+  }
+
+  const uniqueSources = new Map<string, KnowledgeSource>();
+  for (const source of [...revisionSources, ...chunkSources]) {
+    const key = `${source.kind}\u0000${source.title}\u0000${source.excerpt}`;
+    if (!uniqueSources.has(key)) uniqueSources.set(key, source);
+  }
+
+  const ranked = [...uniqueSources.values()]
     .filter((source) => source.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);

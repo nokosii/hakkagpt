@@ -18,6 +18,9 @@ type StatusData = {
   documentCount: number;
   pendingCount: number;
   reviewer: boolean;
+  storageConnected: boolean;
+  storageLabel: string;
+  googleDriveConnected: boolean;
 };
 type ReviewEntry = {
   id: string;
@@ -56,6 +59,9 @@ export function HakkaPlatform() {
     documentCount: 0,
     pendingCount: 0,
     reviewer: false,
+    storageConnected: false,
+    storageLabel: "尚未連線",
+    googleDriveConnected: false,
   });
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -156,12 +162,14 @@ export function HakkaPlatform() {
         chunkCount?: number;
         pageCount?: number | null;
         rowCount?: number | null;
+        storage?: "google-drive" | "r2";
       };
       if (!response.ok) throw new Error(data.error || "檔案匯入失敗");
       const detail = data.pageCount
         ? `${data.pageCount} 頁`
         : `${data.rowCount || 0} 筆資料列`;
-      setNotice(`知識匯入完成：${detail}，建立 ${data.chunkCount} 個可檢索片段。`);
+      const destination = data.storage === "google-drive" ? "Google Drive" : "平台檔案空間";
+      setNotice(`知識匯入完成：原檔已存入${destination}，${detail}，建立 ${data.chunkCount} 個可檢索片段。`);
       event.currentTarget.reset();
       await refresh();
     } catch (error) {
@@ -370,7 +378,7 @@ export function HakkaPlatform() {
               <header className="workspace-hero">
                 <span className="eyebrow">STRUCTURED + UNSTRUCTURED</span>
                 <h1>把研究資料，<em>放進會回答的知識庫。</em></h1>
-                <p>CSV 保留欄位關係，PDF 抽取全文內容；原檔與檢索片段分開保存，讓每次回答可追溯來源。</p>
+                <p>CSV 保留欄位關係，PDF 抽取全文內容；原檔與檢索索引保存到指定的 Google Drive 資料夾，讓每次回答可追溯來源。</p>
               </header>
               <div className="upload-layout">
                 <form className="drop-panel" onSubmit={uploadFile}>
@@ -392,7 +400,7 @@ export function HakkaPlatform() {
                     <span className="format-code pdf">PDF</span>
                     <div><h3>非結構化文件</h3><p>抽取可選取的文字層，依語意長度切分後加入檢索。</p><ul><li>研究報告</li><li>期刊論文</li><li>文史出版品</li></ul></div>
                   </article>
-                  <div className="privacy-strip"><b>原檔保存</b><span>R2</span><i>→</i><b>文字片段</b><span>D1</span><i>→</i><b>HakkaGPT</b><span>RAG</span></div>
+                  <div className="privacy-strip"><b>原檔與索引</b><span>{status.storageLabel}</span><i>→</i><b>知識檢索</b><span>RAG</span><i>→</i><b>回答</b><span>HakkaGPT</span></div>
                 </div>
               </div>
             </section>
@@ -434,7 +442,7 @@ export function HakkaPlatform() {
           <div className="footer-mark"><span>客天光</span><small>HAKKA KNOWLEDGE AI</small></div>
           <div className="footer-copy">
             <p><strong>本系統「HakkaGPT：結合RAG與大型語言模型之客家知識AI專家對話系統」由 客家委員會 補助建置。</strong>本系統所提供之客家知識內容、AI 對話及相關數位服務，目的在促進客家知識傳播、文化推廣、教育應用與學術研究。</p>
-            <p><strong>補助單位：客家委員會　執行單位：國立聯合大學客家研究學院　系統建置：智慧客家實驗室</strong></p>
+            <p><strong>補助單位：客家委員會{"\u3000"}執行單位：國立聯合大學客家研究學院{"\u3000"}系統建置：智慧客家實驗室</strong></p>
           </div>
         </footer>
       </div>

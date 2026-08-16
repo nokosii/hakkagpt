@@ -1,5 +1,3 @@
-import { env } from "cloudflare:workers";
-
 export type PlatformEnv = {
   DB: D1Database;
   KNOWLEDGE_FILES: R2Bucket;
@@ -8,12 +6,26 @@ export type PlatformEnv = {
   HAKKAGPT_AGENT_ID?: string;
   HAKKAGPT_USER_ID?: string;
   REVIEWER_EMAILS?: string;
+  GOOGLE_DRIVE_FOLDER_ID?: string;
+  GOOGLE_DRIVE_CLIENT_ID?: string;
+  GOOGLE_DRIVE_CLIENT_SECRET?: string;
+  GOOGLE_DRIVE_REFRESH_TOKEN?: string;
 };
 
 let schemaReady = false;
+let workerBindings: Partial<PlatformEnv> = {};
+
+try {
+  const workerRuntime = await import("cloudflare:workers");
+  workerBindings = workerRuntime.env as unknown as Partial<PlatformEnv>;
+} catch {
+  // Render 使用 Node.js 環境變數，不提供 cloudflare:workers 模組。
+}
 
 export function getPlatformEnv(): PlatformEnv {
-  return env as unknown as PlatformEnv;
+  const nodeEnvironment =
+    typeof process !== "undefined" ? process.env as Record<string, string | undefined> : {};
+  return { ...nodeEnvironment, ...workerBindings } as unknown as PlatformEnv;
 }
 
 export async function ensureSchema(): Promise<D1Database> {

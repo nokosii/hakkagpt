@@ -1,4 +1,20 @@
-# vinext-starter
+# 客天光｜客家GPT
+
+結合 HakkaGPT API、RAG 文件匯入、共創詞條與審查流程的客家知識 AI 專家對話系統。
+
+## Render 部署
+
+- Build Command：`npm install && npm run build`
+- Start Command：`npm run start`
+- Google Drive 上傳設定：[docs/render-google-drive.md](docs/render-google-drive.md)
+
+Render 需把 `PORT` 交給平台自動設定；vinext 會依環境啟動服務。Google Drive 的 OAuth 憑證只放 Render 環境變數，不得提交至 GitHub。
+
+## Sites 部署
+
+`.openai/hosting.json` 宣告 Cloudflare D1 與 R2。未設定 Google Drive 時，Sites 會延用 D1 儲存檢索資料、R2 儲存原始檔案。
+
+## 本機開發
 
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
