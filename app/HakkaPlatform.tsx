@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
-type View = "chat" | "contribute" | "upload" | "review";
+type View = "chat" | "contribute" | "upload" | "admin";
 type Source = {
   id: string;
   title: string;
@@ -21,22 +21,33 @@ type StatusData = {
   storageConnected: boolean;
   storageLabel: string;
   googleDriveConnected: boolean;
+  adminConfigured?: boolean;
 };
-type ReviewEntry = {
+type AdminEntry = {
   id: string;
   term: string;
   summary: string;
   content: string;
   source_url: string | null;
+  status: "pending" | "approved" | "rejected";
   author_email: string;
+  reviewer_email: string | null;
+  review_note: string | null;
   created_at: number;
+  reviewed_at: number | null;
+};
+type UploadPreview = {
+  file: File;
+  kind: "csv" | "pdf";
+  rows?: string[][];
+  objectUrl?: string;
 };
 
 const navItems: Array<{ id: View; label: string; kicker: string; glyph: string }> = [
   { id: "chat", label: "智識問答", kicker: "ASK", glyph: "光" },
   { id: "contribute", label: "共創詞條", kicker: "EDIT", glyph: "編" },
   { id: "upload", label: "知識匯入", kicker: "RAG", glyph: "入" },
-  { id: "review", label: "審查中心", kicker: "REVIEW", glyph: "審" },
+  { id: "admin", label: "管理後台", kicker: "ADMIN", glyph: "管" },
 ];
 
 const suggestions = [
@@ -49,6 +60,53 @@ function statusLabel(status: Source["status"]) {
   if (status === "pending") return "共編待審";
   if (status === "approved") return "審查通過";
   return "文件匯入";
+}
+
+function adminStatusLabel(status: AdminEntry["status"]) {
+  if (status === "pending") return "待審";
+  if (status === "approved") return "已通過";
+  return "未通過";
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function csvPreview(text: string, limit = 8) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < text.length && rows.length < limit; index += 1) {
+    const character = text[index];
+    if (character === '"') {
+      if (quoted && text[index + 1] === '"') {
+        cell += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (character === "," && !quoted) {
+      row.push(cell);
+      cell = "";
+    } else if ((character === "\n" || character === "\r") && !quoted) {
+      if (character === "\r" && text[index + 1] === "\n") index += 1;
+      row.push(cell);
+      if (row.some((value) => value.trim())) rows.push(row);
+      row = [];
+      cell = "";
+    } else {
+      cell += character;
+    }
+  }
+  if (rows.length < limit && (cell || row.length)) {
+    row.push(cell);
+    if (row.some((value) => value.trim())) rows.push(row);
+  }
+  if (rows[0]?.[0]) rows[0][0] = rows[0][0].replace(/^\uFEFF/, "");
+  return rows;
 }
 
 export function HakkaPlatform() {
@@ -73,28 +131,55 @@ export function HakkaPlatform() {
   const [asking, setAsking] = useState(false);
   const [latestSources, setLatestSources] = useState<Source[]>([]);
   const [notice, setNotice] = useState("");
-  const [reviewEntries, setReviewEntries] = useState<ReviewEntry[]>([]);
+  const [adminEntries, setAdminEntries] = useState<AdminEntry[]>([]);
+  const [adminAuthenticated, setAdminAuthenticated] = useState(false);
+  const [adminConfigured, setAdminConfigured] = useState(false);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
+  const [adminBusy, setAdminBusy] = useState(false);
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [reviewLoading, setReviewLoading] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadPreview, setUploadPreview] = useState<UploadPreview | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
-    const [statusResponse, reviewResponse] = await Promise.all([
+    const [statusResponse, sessionResponse] = await Promise.all([
       fetch("/api/status", { cache: "no-store" }),
-      fetch("/api/review", { cache: "no-store" }),
+      fetch("/api/admin/session", { cache: "no-store" }),
     ]);
     if (statusResponse.ok) setStatus(await statusResponse.json());
-    if (reviewResponse.ok) {
-      const data = (await reviewResponse.json()) as { entries: ReviewEntry[]; reviewer: boolean };
-      setReviewEntries(data.entries);
-      setStatus((current) => ({ ...current, reviewer: data.reviewer }));
+    if (sessionResponse.ok) {
+      const session = (await sessionResponse.json()) as { authenticated: boolean; configured: boolean };
+      setAdminAuthenticated(session.authenticated);
+      setAdminConfigured(session.configured);
+      setStatus((current) => ({ ...current, reviewer: session.authenticated }));
+      if (session.authenticated) {
+        const entriesResponse = await fetch("/api/admin/entries", { cache: "no-store" });
+        if (entriesResponse.ok) {
+          const data = (await entriesResponse.json()) as { entries: AdminEntry[] };
+          setAdminEntries(data.entries);
+          setSelectedEntryIds((current) => new Set([...current].filter((id) =>
+            data.entries.some((entry) => entry.id === id),
+          )));
+        }
+      } else {
+        setAdminEntries([]);
+        setSelectedEntryIds(new Set());
+      }
     }
   }, []);
 
   useEffect(() => {
     refresh().catch(() => setNotice("平台狀態暫時無法更新"));
   }, [refresh]);
+
+  useEffect(() => {
+    const objectUrl = uploadPreview?.objectUrl;
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [uploadPreview?.objectUrl]);
 
   async function ask(event?: FormEvent, suggested?: string) {
     event?.preventDefault();
@@ -147,9 +232,36 @@ export function HakkaPlatform() {
     await refresh();
   }
 
+  async function prepareUploadPreview(file?: File) {
+    if (!file) {
+      setUploadPreview(null);
+      return;
+    }
+    const extension = file.name.toLowerCase().split(".").pop();
+    if (extension !== "csv" && extension !== "pdf") {
+      setUploadPreview(null);
+      setNotice("目前只接受 CSV 或 PDF 檔案");
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadPreview(null);
+      setNotice("單一檔案不可超過 10 MB");
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+    setNotice("");
+    if (extension === "csv") {
+      const text = await file.slice(0, 256 * 1024).text();
+      setUploadPreview({ file, kind: "csv", rows: csvPreview(text) });
+    } else {
+      setUploadPreview({ file, kind: "pdf", objectUrl: URL.createObjectURL(file) });
+    }
+  }
+
   async function uploadFile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const file = fileRef.current?.files?.[0];
+    const file = uploadPreview?.file;
     if (!file || uploading) return;
     setUploading(true);
     setNotice("");
@@ -171,11 +283,102 @@ export function HakkaPlatform() {
       const destination = data.storage === "google-drive" ? "Google Drive" : "平台檔案空間";
       setNotice(`知識匯入完成：原檔已存入${destination}，${detail}，建立 ${data.chunkCount} 個可檢索片段。`);
       event.currentTarget.reset();
+      setUploadPreview(null);
       await refresh();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "檔案匯入失敗");
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function loginAdmin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!adminPassword || adminBusy) return;
+    setAdminBusy(true);
+    try {
+      const response = await fetch("/api/admin/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: adminPassword }),
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(data.error || "管理者登入失敗");
+      setAdminPassword("");
+      setNotice("管理者登入成功");
+      await refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "管理者登入失敗");
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function logoutAdmin() {
+    await fetch("/api/admin/session", { method: "DELETE" });
+    setAdminAuthenticated(false);
+    setAdminEntries([]);
+    setSelectedEntryIds(new Set());
+    setNotice("已登出管理後台");
+  }
+
+  function toggleEntry(id: string) {
+    setSelectedEntryIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function deleteSelectedEntries() {
+    const ids = [...selectedEntryIds];
+    if (!ids.length || adminBusy) return;
+    if (!window.confirm(`確定永久刪除選取的 ${ids.length} 筆新增詞條？`)) return;
+    setAdminBusy(true);
+    try {
+      const response = await fetch("/api/admin/entries", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      const data = (await response.json()) as { deleted?: number; error?: string };
+      if (!response.ok) throw new Error(data.error || "資料刪除失敗");
+      setNotice(`已刪除 ${data.deleted || ids.length} 筆新增詞條`);
+      setSelectedEntryIds(new Set());
+      await refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "資料刪除失敗");
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function exportEntries() {
+    if (adminBusy) return;
+    setAdminBusy(true);
+    try {
+      const response = await fetch("/api/admin/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [...selectedEntryIds] }),
+      });
+      if (!response.ok) {
+        const data = (await response.json()) as { error?: string };
+        throw new Error(data.error || "資料匯出失敗");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `ketiengong-entries-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setNotice(selectedEntryIds.size ? `已下載 ${selectedEntryIds.size} 筆詞條` : "已下載全部新增詞條");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "資料匯出失敗");
+    } finally {
+      setAdminBusy(false);
     }
   }
 
@@ -219,7 +422,7 @@ export function HakkaPlatform() {
             >
               <span className="nav-glyph" aria-hidden="true">{item.glyph}</span>
               <span><strong>{item.label}</strong><small>{item.kicker}</small></span>
-              {item.id === "review" && status.pendingCount > 0 ? (
+              {item.id === "admin" && status.pendingCount > 0 ? (
                 <b className="nav-count">{status.pendingCount}</b>
               ) : null}
             </button>
@@ -382,14 +585,54 @@ export function HakkaPlatform() {
               </header>
               <div className="upload-layout">
                 <form className="drop-panel" onSubmit={uploadFile}>
-                  <input ref={fileRef} id="knowledge-file" name="file" type="file" accept=".csv,.pdf,text/csv,application/pdf" required />
+                  <input
+                    ref={fileRef}
+                    id="knowledge-file"
+                    name="file"
+                    type="file"
+                    accept=".csv,.pdf,text/csv,application/pdf"
+                    required
+                    onChange={(event) => prepareUploadPreview(event.target.files?.[0]).catch(() =>
+                      setNotice("無法顯示檔案預覽"),
+                    )}
+                  />
                   <label htmlFor="knowledge-file" className="drop-zone">
                     <span className="upload-mark" aria-hidden="true">↑</span>
-                    <h2>選擇 CSV 或 PDF</h2>
-                    <p>也可以把檔案拖曳到這裡</p>
+                    <h2>{uploadPreview ? "重新選擇檔案" : "選擇 CSV 或 PDF"}</h2>
+                    <p>{uploadPreview ? "目前檔案已載入預覽" : "點選這裡瀏覽裝置中的檔案"}</p>
                     <small>單檔上限 10 MB</small>
                   </label>
-                  <button className="primary-action full" type="submit" disabled={uploading}>{uploading ? "正在抽取與切分…" : "開始匯入知識"}</button>
+                  {uploadPreview ? (
+                    <section className="file-selection" aria-live="polite">
+                      <header className="file-preview-head">
+                        <div><b>{uploadPreview.file.name}</b><span>{uploadPreview.kind.toUpperCase()} · {formatBytes(uploadPreview.file.size)}</span></div>
+                        <strong>已選取，請確認內容</strong>
+                      </header>
+                      {uploadPreview.kind === "csv" ? (
+                        uploadPreview.rows?.length ? (
+                          <div className="preview-table-wrap">
+                            <table>
+                              <tbody>
+                                {uploadPreview.rows.map((row, rowIndex) => (
+                                  <tr key={`preview-${rowIndex}`}>
+                                    {row.map((cell, cellIndex) => rowIndex === 0
+                                      ? <th key={`${rowIndex}-${cellIndex}`}>{cell}</th>
+                                      : <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            <small>顯示前 {uploadPreview.rows.length} 列，傳送時會處理完整檔案</small>
+                          </div>
+                        ) : <p className="preview-empty">CSV 目前沒有可預覽的資料列</p>
+                      ) : (
+                        <iframe className="pdf-preview" src={uploadPreview.objectUrl} title={`${uploadPreview.file.name} 預覽`} />
+                      )}
+                    </section>
+                  ) : null}
+                  <button className="primary-action full" type="submit" disabled={uploading || !uploadPreview}>
+                    {uploading ? "正在抽取與切分…" : "確認內容並傳送"}
+                  </button>
                 </form>
                 <div className="format-notes">
                   <article>
@@ -406,34 +649,74 @@ export function HakkaPlatform() {
             </section>
           ) : null}
 
-          {activeView === "review" ? (
+          {activeView === "admin" ? (
             <section className="workspace-view">
               <header className="workspace-hero review-hero">
-                <div><span className="eyebrow">EDITORIAL REVIEW DESK</span><h1>讓開放共創，<em>也有可信的落款。</em></h1><p>逐筆核對來源與內容。拒絕修訂後，該版本立即停止參與查詢。</p></div>
-                <div className="review-total"><strong>{reviewEntries.length}</strong><span>待審詞條</span></div>
+                <div><span className="eyebrow">KNOWLEDGE ADMINISTRATION</span><h1>每一筆共創，<em>都有清楚的去向。</em></h1><p>管理者可審查、刪除或批次下載使用者新增的詞條資料。</p></div>
+                <div className="review-total"><strong>{adminEntries.filter((entry) => entry.status === "pending").length}</strong><span>待審詞條</span></div>
               </header>
-              {!status.reviewer ? <div className="permission-note">目前為檢視模式；審查按鈕僅對已授權帳號開放。</div> : null}
-              <div className="review-list">
-                {reviewEntries.length ? reviewEntries.map((entry, index) => (
-                  <article className="review-card" key={entry.id}>
-                    <div className="review-index">{String(index + 1).padStart(2, "0")}</div>
-                    <div className="review-content">
-                      <div className="review-meta"><b>共編待審</b><span>{new Date(entry.created_at).toLocaleDateString("zh-TW")}</span><span>{entry.author_email}</span></div>
-                      <h2>{entry.term}</h2>
-                      <h3>{entry.summary}</h3>
-                      <p>{entry.content}</p>
-                      {entry.source_url ? <a href={entry.source_url} target="_blank" rel="noreferrer">核對參考來源 ↗</a> : <span className="no-source">未附外部來源</span>}
+              {!adminAuthenticated ? (
+                <form className="admin-login" onSubmit={loginAdmin}>
+                  <div><span className="eyebrow">ADMIN SIGN IN</span><h2>登入管理後台</h2><p>管理者密碼只會送至伺服器驗證，瀏覽器不會保存明文。</p></div>
+                  {!adminConfigured ? <div className="permission-note">尚未設定 ADMIN 環境變數，請先在部署平台完成設定。</div> : null}
+                  <label htmlFor="admin-password">管理者密碼</label>
+                  <div className="admin-login-row">
+                    <input id="admin-password" type="password" autoComplete="current-password" value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} placeholder="輸入管理者密碼" required />
+                    <button className="primary-action" type="submit" disabled={adminBusy || !adminConfigured}>登入後台 <b>↗</b></button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <div className="admin-toolbar">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={adminEntries.length > 0 && selectedEntryIds.size === adminEntries.length}
+                        onChange={(event) => setSelectedEntryIds(event.target.checked
+                          ? new Set(adminEntries.map((entry) => entry.id))
+                          : new Set())}
+                      />
+                      全選 {adminEntries.length} 筆
+                    </label>
+                    <span>{selectedEntryIds.size ? `已選 ${selectedEntryIds.size} 筆` : "未選取時會下載全部資料"}</span>
+                    <div>
+                      <button type="button" onClick={exportEntries} disabled={adminBusy || !adminEntries.length}>批次下載 CSV</button>
+                      <button type="button" className="danger" onClick={deleteSelectedEntries} disabled={adminBusy || !selectedEntryIds.size}>刪除選取資料</button>
+                      <button type="button" onClick={logoutAdmin}>登出</button>
                     </div>
-                    <div className="review-actions">
-                      <label>審查備註<textarea rows={3} value={reviewNotes[entry.id] || ""} onChange={(event) => setReviewNotes((current) => ({ ...current, [entry.id]: event.target.value }))} placeholder="補充採用或退回原因…" /></label>
-                      <button type="button" className="approve" disabled={!status.reviewer || reviewLoading === entry.id} onClick={() => review(entry.id, "approve")}>通過並定稿</button>
-                      <button type="button" className="reject" disabled={!status.reviewer || reviewLoading === entry.id} onClick={() => review(entry.id, "reject")}>退回此版本</button>
-                    </div>
-                  </article>
-                )) : (
-                  <div className="empty-state"><span>✓</span><h2>目前沒有待審詞條</h2><p>新的公眾共編送出後，會依時間順序出現在這裡。</p></div>
-                )}
-              </div>
+                  </div>
+                  <div className="review-list">
+                    {adminEntries.length ? adminEntries.map((entry, index) => (
+                      <article className={selectedEntryIds.has(entry.id) ? "review-card admin-card selected" : "review-card admin-card"} key={entry.id}>
+                        <div className="admin-selector">
+                          <input type="checkbox" checked={selectedEntryIds.has(entry.id)} onChange={() => toggleEntry(entry.id)} aria-label={`選取 ${entry.term}`} />
+                          <span>{String(index + 1).padStart(2, "0")}</span>
+                        </div>
+                        <div className="review-content">
+                          <div className="review-meta"><b className={`entry-state ${entry.status}`}>{adminStatusLabel(entry.status)}</b><span>{new Date(entry.created_at).toLocaleString("zh-TW")}</span><span>{entry.author_email}</span></div>
+                          <h2>{entry.term}</h2>
+                          <h3>{entry.summary}</h3>
+                          <p>{entry.content}</p>
+                          {entry.source_url ? <a href={entry.source_url} target="_blank" rel="noreferrer">核對參考來源 ↗</a> : <span className="no-source">未附外部來源</span>}
+                        </div>
+                        <div className="review-actions">
+                          {entry.status === "pending" ? (
+                            <>
+                              <label>審查備註<textarea rows={3} value={reviewNotes[entry.id] || ""} onChange={(event) => setReviewNotes((current) => ({ ...current, [entry.id]: event.target.value }))} placeholder="補充採用或退回原因…" /></label>
+                              <button type="button" className="approve" disabled={reviewLoading === entry.id} onClick={() => review(entry.id, "approve")}>通過並定稿</button>
+                              <button type="button" className="reject" disabled={reviewLoading === entry.id} onClick={() => review(entry.id, "reject")}>退回此版本</button>
+                            </>
+                          ) : (
+                            <div className="review-result"><b>{adminStatusLabel(entry.status)}</b><p>{entry.review_note || "未填審查備註"}</p>{entry.reviewed_at ? <small>{new Date(entry.reviewed_at).toLocaleString("zh-TW")}</small> : null}</div>
+                          )}
+                        </div>
+                      </article>
+                    )) : (
+                      <div className="empty-state"><span>✓</span><h2>目前沒有新增詞條</h2><p>使用者送出共編詞條後，會依時間順序出現在這裡。</p></div>
+                    )}
+                  </div>
+                </>
+              )}
             </section>
           ) : null}
         </main>

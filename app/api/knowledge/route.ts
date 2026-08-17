@@ -1,4 +1,5 @@
-import { ensureSchema, requestIdentity } from "@/db/runtime";
+import { requestIdentity } from "@/db/runtime";
+import { createKnowledgeEntry, listKnowledgeEntries } from "@/lib/knowledge-entries";
 
 export const runtime = "edge";
 
@@ -7,13 +8,7 @@ function slugify(value: string) {
 }
 
 export async function GET() {
-  const DB = await ensureSchema();
-  const result = await DB.prepare(`SELECT id, term, slug, summary, content, source_url,
-      status, author_email, review_note, created_at, reviewed_at
-    FROM knowledge_revisions
-    ORDER BY created_at DESC
-    LIMIT 120`).all();
-  return Response.json({ entries: result.results || [] });
+  return Response.json({ entries: await listKnowledgeEntries(120) });
 }
 
 export async function POST(request: Request) {
@@ -47,24 +42,22 @@ export async function POST(request: Request) {
     }
 
     const identity = requestIdentity(request);
-    const DB = await ensureSchema();
     const id = crypto.randomUUID();
-    await DB.prepare(`INSERT INTO knowledge_revisions (
-      id, term, slug, summary, content, source_url, status,
-      author_id, author_email, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`)
-      .bind(
-        id,
-        term,
-        slugify(term) || id,
-        summary,
-        content,
-        sourceUrl || null,
-        identity.id,
-        identity.email,
-        Date.now(),
-      )
-      .run();
+    await createKnowledgeEntry({
+      id,
+      term,
+      slug: slugify(term) || id,
+      summary,
+      content,
+      source_url: sourceUrl || null,
+      status: "pending",
+      author_id: identity.id,
+      author_email: identity.email,
+      reviewer_email: null,
+      review_note: null,
+      created_at: Date.now(),
+      reviewed_at: null,
+    });
     return Response.json({ id, status: "pending", activeInSearch: true }, { status: 201 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "詞條送出失敗" }, { status: 500 });

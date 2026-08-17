@@ -10,6 +10,7 @@ export type PlatformEnv = {
   GOOGLE_DRIVE_CLIENT_ID?: string;
   GOOGLE_DRIVE_CLIENT_SECRET?: string;
   GOOGLE_DRIVE_REFRESH_TOKEN?: string;
+  ADMIN?: string;
 };
 
 let schemaReady = false;

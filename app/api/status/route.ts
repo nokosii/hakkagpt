@@ -1,5 +1,10 @@
-import { ensureSchema, getPlatformEnv, isReviewer } from "@/db/runtime";
-import { countDriveKnowledgeDocuments, googleDriveStatus } from "@/lib/google-drive";
+import { ensureSchema, getPlatformEnv } from "@/db/runtime";
+import { adminStatus, isAdminRequest } from "@/lib/admin-auth";
+import {
+  countDriveKnowledgeDocuments,
+  googleDriveStatus,
+  loadDriveKnowledgeEntries,
+} from "@/lib/google-drive";
 
 export const runtime = "edge";
 
@@ -28,7 +33,21 @@ export async function GET(request: Request) {
   let driveReachable = false;
   if (drive.configured) {
     try {
-      driveDocumentCount = await countDriveKnowledgeDocuments();
+      const [documentCount, driveEntries] = await Promise.all([
+        countDriveKnowledgeDocuments(),
+        loadDriveKnowledgeEntries(),
+      ]);
+      driveDocumentCount = documentCount;
+      const activeSlugs = new Set(
+        driveEntries
+          .filter((entry) => entry.status === "pending" || entry.status === "approved")
+          .map((entry) => entry.slug),
+      );
+      entryCount = Math.max(entryCount, activeSlugs.size);
+      pendingCount = Math.max(
+        pendingCount,
+        driveEntries.filter((entry) => entry.status === "pending").length,
+      );
       driveReachable = true;
     } catch {
       // 狀態列不應因 Drive 暫時無法列出檔案而整體失效。
@@ -40,7 +59,8 @@ export async function GET(request: Request) {
     entryCount,
     documentCount: Math.max(localDocumentCount, driveDocumentCount),
     pendingCount,
-    reviewer: databaseConnected && isReviewer(request),
+    reviewer: await isAdminRequest(request),
+    adminConfigured: adminStatus().configured,
     databaseConnected,
     storageConnected: driveReachable || r2Connected,
     storageLabel: drive.configured

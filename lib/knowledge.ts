@@ -1,5 +1,5 @@
 import { ensureSchema } from "@/db/runtime";
-import { loadDriveKnowledgeIndexes } from "@/lib/google-drive";
+import { loadDriveKnowledgeEntries, loadDriveKnowledgeIndexes } from "@/lib/google-drive";
 
 export type KnowledgeSource = {
   id: string;
@@ -75,6 +75,36 @@ export async function retrieveKnowledge(question: string) {
     databaseChunks.push(...(chunkResult.results || []));
   } catch {
     // Render 可直接從 Google Drive 索引取得文件內容，D1 不可用時不阻斷查詢。
+  }
+
+  try {
+    const driveEntries = (await loadDriveKnowledgeEntries())
+      .filter((entry) => entry.status === "pending" || entry.status === "approved")
+      .sort((a, b) => {
+        if (a.status !== b.status) return a.status === "pending" ? -1 : 1;
+        return b.createdAt - a.createdAt;
+    });
+    for (const entry of driveEntries) {
+      const current = chosenBySlug.get(entry.slug);
+      if (
+        !current ||
+        (entry.status === "pending" && current.status !== "pending") ||
+        (entry.status === current.status && entry.createdAt > current.created_at)
+      ) {
+        chosenBySlug.set(entry.slug, {
+          id: entry.id,
+          term: entry.term,
+          slug: entry.slug,
+          summary: entry.summary,
+          content: entry.content,
+          source_url: entry.sourceUrl,
+          status: entry.status,
+          created_at: entry.createdAt,
+        });
+      }
+    }
+  } catch {
+    // Drive 暫時無法讀取時，仍可使用 D1 既有詞條。
   }
 
   const revisionSources: KnowledgeSource[] = [...chosenBySlug.values()].map((row) => ({

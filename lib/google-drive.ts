@@ -4,6 +4,7 @@ const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const INDEX_KIND = "ketiengong-rag-index";
+const ENTRY_KIND = "ketiengong-knowledge-entry";
 const DEFAULT_FOLDER_ID = "1AQ8NQBgruJlb6bYQMVUOPvJPZ0olKFUd";
 
 export type DriveKnowledgeIndex = {
@@ -17,6 +18,27 @@ export type DriveKnowledgeIndex = {
   rowCount: number | null;
   createdAt: number;
   chunks: string[];
+};
+
+export type DriveKnowledgeEntry = {
+  version: 1;
+  id: string;
+  term: string;
+  slug: string;
+  summary: string;
+  content: string;
+  sourceUrl: string | null;
+  status: "pending" | "approved" | "rejected";
+  authorId: string;
+  authorEmail: string;
+  reviewerEmail: string | null;
+  reviewNote: string | null;
+  createdAt: number;
+  reviewedAt: number | null;
+};
+
+export type DriveKnowledgeEntryRecord = DriveKnowledgeEntry & {
+  driveFileId: string;
 };
 
 type DriveFile = {
@@ -33,6 +55,7 @@ type DriveFileList = {
 
 let accessTokenCache: { token: string; expiresAt: number } | null = null;
 let indexCache: { indexes: DriveKnowledgeIndex[]; expiresAt: number } | null = null;
+let entryCache: { entries: DriveKnowledgeEntryRecord[]; expiresAt: number } | null = null;
 
 function driveEnv(platformEnv: PlatformEnv = getPlatformEnv()) {
   return {
@@ -118,14 +141,17 @@ async function resumableUpload(args: {
   mimeType: string;
   data: Blob;
   knowledgeId: string;
-  kind: "original" | "index";
+  kind: "original" | "index" | "entry";
 }) {
   const { folderId } = driveEnv();
   const metadata = {
     name: args.name,
     parents: [folderId],
     appProperties: {
-      ketiengongType: args.kind === "index" ? INDEX_KIND : "ketiengong-original",
+      ketiengongType:
+        args.kind === "index" ? INDEX_KIND
+          : args.kind === "entry" ? ENTRY_KIND
+            : "ketiengong-original",
       knowledgeId: args.knowledgeId,
     },
   };
@@ -200,9 +226,21 @@ export async function uploadKnowledgeToDrive(args: {
   return { original, sidecar, index };
 }
 
-async function listIndexFiles() {
+export async function uploadKnowledgeEntryToDrive(entry: DriveKnowledgeEntry) {
+  const file = await resumableUpload({
+    name: `.ketiengong-entry-${entry.id}.json`,
+    mimeType: "application/json",
+    data: new Blob([JSON.stringify(entry)], { type: "application/json" }),
+    knowledgeId: entry.id,
+    kind: "entry",
+  });
+  entryCache = null;
+  return { ...entry, driveFileId: file.id } satisfies DriveKnowledgeEntryRecord;
+}
+
+async function listFilesByKind(kind: string) {
   const { folderId } = driveEnv();
-  const query = `'${folderId.replace(/'/g, "\\'")}' in parents and trashed = false and appProperties has { key='ketiengongType' and value='${INDEX_KIND}' }`;
+  const query = `'${folderId.replace(/'/g, "\\'")}' in parents and trashed = false and appProperties has { key='ketiengongType' and value='${kind}' }`;
   const files: DriveFile[] = [];
   let pageToken = "";
   do {
@@ -248,7 +286,7 @@ async function downloadIndex(file: DriveFile) {
 export async function loadDriveKnowledgeIndexes() {
   if (!googleDriveStatus().configured) return [];
   if (indexCache && indexCache.expiresAt > Date.now()) return indexCache.indexes;
-  const files = await listIndexFiles();
+  const files = await listFilesByKind(INDEX_KIND);
   const indexes: DriveKnowledgeIndex[] = [];
   for (let start = 0; start < files.length; start += 12) {
     const batch = await Promise.all(files.slice(start, start + 12).map(downloadIndex));
@@ -260,5 +298,77 @@ export async function loadDriveKnowledgeIndexes() {
 
 export async function countDriveKnowledgeDocuments() {
   if (!googleDriveStatus().configured) return 0;
-  return (await listIndexFiles()).length;
+  return (await listFilesByKind(INDEX_KIND)).length;
+}
+
+async function downloadEntry(file: DriveFile) {
+  const response = await authorizedFetch(
+    `${DRIVE_API}/files/${encodeURIComponent(file.id)}?alt=media&supportsAllDrives=true`,
+  );
+  if (!response.ok) return null;
+  try {
+    const entry = (await response.json()) as DriveKnowledgeEntry;
+    if (
+      entry.version !== 1 ||
+      !entry.id ||
+      !entry.term ||
+      !entry.slug ||
+      !["pending", "approved", "rejected"].includes(entry.status)
+    ) return null;
+    return { ...entry, driveFileId: file.id } satisfies DriveKnowledgeEntryRecord;
+  } catch {
+    return null;
+  }
+}
+
+export async function loadDriveKnowledgeEntries() {
+  if (!googleDriveStatus().configured) return [];
+  if (entryCache && entryCache.expiresAt > Date.now()) return entryCache.entries;
+  const files = await listFilesByKind(ENTRY_KIND);
+  const entries: DriveKnowledgeEntryRecord[] = [];
+  for (let start = 0; start < files.length; start += 12) {
+    const batch = await Promise.all(files.slice(start, start + 12).map(downloadEntry));
+    for (const entry of batch) if (entry) entries.push(entry);
+  }
+  entries.sort((a, b) => b.createdAt - a.createdAt);
+  entryCache = { entries, expiresAt: Date.now() + 60_000 };
+  return entries;
+}
+
+export async function updateDriveKnowledgeEntry(entry: DriveKnowledgeEntryRecord) {
+  const { driveFileId, ...storedEntry } = entry;
+  const response = await authorizedFetch(
+    `${DRIVE_UPLOAD_API}/files/${encodeURIComponent(driveFileId)}?uploadType=media&supportsAllDrives=true&fields=id`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(storedEntry),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await responseMessage(response, "Google Drive 詞條更新失敗"));
+  }
+  entryCache = null;
+}
+
+export async function deleteDriveKnowledgeEntries(ids: string[]) {
+  const wanted = new Set(ids);
+  const entries = await loadDriveKnowledgeEntries();
+  const targets = entries.filter((entry) => wanted.has(entry.id));
+  let deleted = 0;
+  for (let start = 0; start < targets.length; start += 8) {
+    const results = await Promise.all(targets.slice(start, start + 8).map(async (entry) => {
+      const response = await authorizedFetch(
+        `${DRIVE_API}/files/${encodeURIComponent(entry.driveFileId)}?supportsAllDrives=true`,
+        { method: "DELETE" },
+      );
+      if (!response.ok && response.status !== 404) {
+        throw new Error(await responseMessage(response, "Google Drive 詞條刪除失敗"));
+      }
+      return 1;
+    }));
+    deleted += results.reduce((sum, value) => sum + value, 0);
+  }
+  entryCache = null;
+  return deleted;
 }
