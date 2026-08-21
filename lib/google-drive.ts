@@ -1,4 +1,12 @@
 import { getPlatformEnv, type PlatformEnv } from "@/db/runtime";
+import {
+  EMPTY_REVIEW_GATES,
+  defaultGovernance,
+  normalizeGovernance,
+  normalizeReviewGates,
+  type GovernanceMetadata,
+  type ReviewGates,
+} from "@/lib/governance";
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -18,6 +26,18 @@ export type DriveKnowledgeIndex = {
   rowCount: number | null;
   createdAt: number;
   chunks: string[];
+  governance?: GovernanceMetadata;
+  reviewStatus?: "pending" | "approved" | "rejected";
+  reviewerEmail?: string | null;
+  reviewNote?: string | null;
+  reviewGates?: ReviewGates;
+  reviewedAt?: number | null;
+  ownerId?: string;
+  ownerEmail?: string;
+};
+
+export type DriveKnowledgeIndexRecord = DriveKnowledgeIndex & {
+  driveFileId: string;
 };
 
 export type DriveKnowledgeEntry = {
@@ -35,6 +55,8 @@ export type DriveKnowledgeEntry = {
   reviewNote: string | null;
   createdAt: number;
   reviewedAt: number | null;
+  governance: GovernanceMetadata;
+  reviewGates: ReviewGates;
 };
 
 export type DriveKnowledgeEntryRecord = DriveKnowledgeEntry & {
@@ -54,7 +76,7 @@ type DriveFileList = {
 };
 
 let accessTokenCache: { token: string; expiresAt: number } | null = null;
-let indexCache: { indexes: DriveKnowledgeIndex[]; expiresAt: number } | null = null;
+let indexCache: { indexes: DriveKnowledgeIndexRecord[]; expiresAt: number } | null = null;
 let entryCache: { entries: DriveKnowledgeEntryRecord[]; expiresAt: number } | null = null;
 
 function driveEnv(platformEnv: PlatformEnv = getPlatformEnv()) {
@@ -193,6 +215,9 @@ export async function uploadKnowledgeToDrive(args: {
   pageCount: number | null;
   rowCount: number | null;
   chunks: string[];
+  governance: GovernanceMetadata;
+  ownerId: string;
+  ownerEmail: string;
 }) {
   const original = await resumableUpload({
     name: args.fileName,
@@ -213,6 +238,14 @@ export async function uploadKnowledgeToDrive(args: {
     rowCount: args.rowCount,
     createdAt: Date.now(),
     chunks: args.chunks,
+    governance: args.governance,
+    reviewStatus: "pending",
+    reviewerEmail: null,
+    reviewNote: null,
+    reviewGates: EMPTY_REVIEW_GATES,
+    reviewedAt: null,
+    ownerId: args.ownerId,
+    ownerEmail: args.ownerEmail,
   };
   const indexBlob = new Blob([JSON.stringify(index)], { type: "application/json" });
   const sidecar = await resumableUpload({
@@ -277,7 +310,13 @@ async function downloadIndex(file: DriveFile) {
       !index.fileName ||
       !Array.isArray(index.chunks)
     ) return null;
-    return index;
+    return {
+      ...index,
+      governance: normalizeGovernance(index.governance || defaultGovernance()),
+      reviewStatus: index.reviewStatus || "pending",
+      reviewGates: normalizeReviewGates(index.reviewGates),
+      driveFileId: file.id,
+    } satisfies DriveKnowledgeIndexRecord;
   } catch {
     return null;
   }
@@ -287,7 +326,7 @@ export async function loadDriveKnowledgeIndexes() {
   if (!googleDriveStatus().configured) return [];
   if (indexCache && indexCache.expiresAt > Date.now()) return indexCache.indexes;
   const files = await listFilesByKind(INDEX_KIND);
-  const indexes: DriveKnowledgeIndex[] = [];
+  const indexes: DriveKnowledgeIndexRecord[] = [];
   for (let start = 0; start < files.length; start += 12) {
     const batch = await Promise.all(files.slice(start, start + 12).map(downloadIndex));
     for (const index of batch) if (index) indexes.push(index);
@@ -315,7 +354,12 @@ async function downloadEntry(file: DriveFile) {
       !entry.slug ||
       !["pending", "approved", "rejected"].includes(entry.status)
     ) return null;
-    return { ...entry, driveFileId: file.id } satisfies DriveKnowledgeEntryRecord;
+    return {
+      ...entry,
+      governance: normalizeGovernance(entry.governance || defaultGovernance()),
+      reviewGates: normalizeReviewGates(entry.reviewGates),
+      driveFileId: file.id,
+    } satisfies DriveKnowledgeEntryRecord;
   } catch {
     return null;
   }
@@ -349,6 +393,43 @@ export async function updateDriveKnowledgeEntry(entry: DriveKnowledgeEntryRecord
     throw new Error(await responseMessage(response, "Google Drive 詞條更新失敗"));
   }
   entryCache = null;
+}
+
+export async function updateDriveKnowledgeIndex(entry: DriveKnowledgeIndexRecord) {
+  const { driveFileId, ...storedIndex } = entry;
+  const response = await authorizedFetch(
+    `${DRIVE_UPLOAD_API}/files/${encodeURIComponent(driveFileId)}?uploadType=media&supportsAllDrives=true&fields=id`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(storedIndex),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await responseMessage(response, "Google Drive 文件索引更新失敗"));
+  }
+  indexCache = null;
+}
+
+export async function deleteDriveKnowledgeDocuments(ids: string[]) {
+  const wanted = new Set(ids);
+  const indexes = await loadDriveKnowledgeIndexes();
+  const targets = indexes.filter((index) => wanted.has(index.knowledgeId));
+  let deleted = 0;
+  for (const index of targets) {
+    for (const fileId of [index.driveFileId, index.originalFileId]) {
+      const response = await authorizedFetch(
+        `${DRIVE_API}/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`,
+        { method: "DELETE" },
+      );
+      if (!response.ok && response.status !== 404) {
+        throw new Error(await responseMessage(response, "Google Drive 文件刪除失敗"));
+      }
+    }
+    deleted += 1;
+  }
+  indexCache = null;
+  return deleted;
 }
 
 export async function deleteDriveKnowledgeEntries(ids: string[]) {

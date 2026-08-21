@@ -7,6 +7,14 @@ import {
   uploadKnowledgeEntryToDrive,
   type DriveKnowledgeEntry,
 } from "@/lib/google-drive";
+import {
+  EMPTY_REVIEW_GATES,
+  governanceFromRow,
+  normalizeGovernance,
+  normalizeReviewGates,
+  type GovernanceMetadata,
+  type ReviewGates,
+} from "@/lib/governance";
 
 export type KnowledgeEntryRecord = {
   id: string;
@@ -22,6 +30,19 @@ export type KnowledgeEntryRecord = {
   review_note: string | null;
   created_at: number;
   reviewed_at: number | null;
+  governance: GovernanceMetadata;
+  review_gates: ReviewGates;
+};
+
+type DatabaseEntryRow = Omit<KnowledgeEntryRecord, "governance" | "review_gates"> & {
+  dialect: string | null;
+  rights_holder: string | null;
+  rights_basis: string | null;
+  license: string | null;
+  access_level: string | null;
+  community_benefit: string | null;
+  consent_confirmed: number | null;
+  review_gates_json: string | null;
 };
 
 function fromDrive(entry: Awaited<ReturnType<typeof loadDriveKnowledgeEntries>>[number]): KnowledgeEntryRecord {
@@ -39,6 +60,8 @@ function fromDrive(entry: Awaited<ReturnType<typeof loadDriveKnowledgeEntries>>[
     review_note: entry.reviewNote,
     created_at: entry.createdAt,
     reviewed_at: entry.reviewedAt,
+    governance: normalizeGovernance(entry.governance),
+    review_gates: normalizeReviewGates(entry.reviewGates),
   };
 }
 
@@ -58,19 +81,40 @@ function toDrive(entry: KnowledgeEntryRecord): DriveKnowledgeEntry {
     reviewNote: entry.review_note,
     createdAt: entry.created_at,
     reviewedAt: entry.reviewed_at,
+    governance: entry.governance,
+    reviewGates: entry.review_gates,
   };
+}
+
+function parseReviewGates(value: string | null) {
+  if (!value) return EMPTY_REVIEW_GATES;
+  try {
+    return normalizeReviewGates(JSON.parse(value));
+  } catch {
+    return EMPTY_REVIEW_GATES;
+  }
 }
 
 export async function listKnowledgeEntries(limit = 500) {
   const entries = new Map<string, KnowledgeEntryRecord>();
   try {
     const DB = await ensureSchema();
-    const result = await DB.prepare(`SELECT id, term, slug, summary, content, source_url,
-        status, author_id, author_email, reviewer_email, review_note, created_at, reviewed_at
-      FROM knowledge_revisions
-      ORDER BY created_at DESC
-      LIMIT ?`).bind(Math.max(1, Math.min(limit, 5000))).all<KnowledgeEntryRecord>();
-    for (const entry of result.results || []) entries.set(entry.id, entry);
+    const result = await DB.prepare(`SELECT r.id, r.term, r.slug, r.summary, r.content, r.source_url,
+        r.status, r.author_id, r.author_email, r.reviewer_email, r.review_note, r.created_at, r.reviewed_at,
+        g.dialect, g.rights_holder, g.rights_basis, g.license, g.access_level,
+        g.community_benefit, g.consent_confirmed, g.review_gates AS review_gates_json
+      FROM knowledge_revisions r
+      LEFT JOIN knowledge_governance g ON g.record_id = r.id AND g.record_kind = 'entry'
+      ORDER BY r.created_at DESC
+      LIMIT ?`).bind(Math.max(1, Math.min(limit, 5000))).all<DatabaseEntryRow>();
+    for (const row of result.results as unknown as DatabaseEntryRow[] || []) {
+      const entry: KnowledgeEntryRecord = {
+        ...row,
+        governance: governanceFromRow(row as unknown as Record<string, unknown>),
+        review_gates: parseReviewGates(row.review_gates_json),
+      };
+      entries.set(entry.id, entry);
+    }
   } catch {
     // Render 沒有 D1 時，詞條由 Google Drive 提供。
   }
@@ -106,7 +150,7 @@ export async function createKnowledgeEntry(entry: KnowledgeEntryRecord) {
 
   try {
     const DB = await ensureSchema();
-    await DB.prepare(`INSERT INTO knowledge_revisions (
+    await DB.batch([DB.prepare(`INSERT INTO knowledge_revisions (
         id, term, slug, summary, content, source_url, status,
         author_id, author_email, reviewer_email, review_note, created_at, reviewed_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
@@ -123,7 +167,21 @@ export async function createKnowledgeEntry(entry: KnowledgeEntryRecord) {
       entry.review_note,
       entry.created_at,
       entry.reviewed_at,
-    ).run();
+    ), DB.prepare(`INSERT OR REPLACE INTO knowledge_governance (
+        record_id, record_kind, dialect, rights_holder, rights_basis, license,
+        access_level, community_benefit, consent_confirmed, review_gates, withdrawn_at, updated_at
+      ) VALUES (?, 'entry', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`).bind(
+      entry.id,
+      entry.governance.dialect,
+      entry.governance.rightsHolder,
+      entry.governance.rightsBasis,
+      entry.governance.license,
+      entry.governance.accessLevel,
+      entry.governance.communityBenefit,
+      entry.governance.consentConfirmed ? 1 : 0,
+      JSON.stringify(entry.review_gates),
+      entry.created_at,
+    )]);
     stored = true;
   } catch (error) {
     firstError ||= error;
@@ -137,6 +195,7 @@ export async function reviewKnowledgeEntry(
   status: "approved" | "rejected",
   note: string,
   reviewerEmail: string,
+  reviewGates: ReviewGates = EMPTY_REVIEW_GATES,
 ) {
   const reviewedAt = Date.now();
   let changed = false;
@@ -152,6 +211,7 @@ export async function reviewKnowledgeEntry(
           status,
           reviewerEmail,
           reviewNote: note || null,
+          reviewGates,
           reviewedAt,
         });
         changed = true;
@@ -163,11 +223,18 @@ export async function reviewKnowledgeEntry(
 
   try {
     const DB = await ensureSchema();
-    const result = await DB.prepare(`UPDATE knowledge_revisions
-      SET status = ?, reviewer_email = ?, review_note = ?, reviewed_at = ?
-      WHERE id = ? AND status = 'pending'`)
-      .bind(status, reviewerEmail, note || null, reviewedAt, id)
-      .run();
+    const [result] = await DB.batch([
+      DB.prepare(`UPDATE knowledge_revisions
+        SET status = ?, reviewer_email = ?, review_note = ?, reviewed_at = ?
+        WHERE id = ? AND status = 'pending'`)
+        .bind(status, reviewerEmail, note || null, reviewedAt, id),
+      DB.prepare(`INSERT INTO knowledge_governance (
+          record_id, record_kind, review_gates, updated_at
+        ) VALUES (?, 'entry', ?, ?)
+        ON CONFLICT(record_id) DO UPDATE SET review_gates = excluded.review_gates,
+          updated_at = excluded.updated_at`)
+        .bind(id, JSON.stringify(reviewGates), reviewedAt),
+    ]);
     if (result.meta.changes) changed = true;
   } catch (error) {
     firstError ||= error;
@@ -192,12 +259,14 @@ export async function deleteKnowledgeEntries(ids: string[]) {
 
   try {
     const DB = await ensureSchema();
-    const results = await DB.batch(
-      uniqueIds.map((id) => DB.prepare(
-        "DELETE FROM knowledge_revisions WHERE id = ? AND author_id <> 'system'",
-      ).bind(id)),
-    );
-    const databaseDeleted = results.reduce((sum, result) => sum + (result.meta.changes || 0), 0);
+    const deletions = uniqueIds.flatMap((id) => [
+      DB.prepare("DELETE FROM knowledge_governance WHERE record_id = ? AND record_kind = 'entry'").bind(id),
+      DB.prepare("DELETE FROM knowledge_revisions WHERE id = ? AND author_id <> 'system'").bind(id),
+    ]);
+    const results = await DB.batch(deletions);
+    const databaseDeleted = results
+      .filter((_, index) => index % 2 === 1)
+      .reduce((sum, result) => sum + (result.meta.changes || 0), 0);
     deleted = Math.max(deleted, databaseDeleted);
   } catch (error) {
     firstError ||= error;

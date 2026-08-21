@@ -63,3 +63,33 @@ export const knowledgeChunks = sqliteTable(
     index("idx_chunks_document_index").on(table.documentId, table.chunkIndex),
   ],
 );
+
+export const knowledgeGovernance = sqliteTable(
+  "knowledge_governance",
+  {
+    recordId: text("record_id").primaryKey(),
+    recordKind: text("record_kind", { enum: ["entry", "document"] }).notNull(),
+    dialect: text("dialect").notNull().default("未標示"),
+    rightsHolder: text("rights_holder").notNull().default("未標示"),
+    rightsBasis: text("rights_basis").notNull().default("待確認"),
+    license: text("license").notNull().default("未標示"),
+    accessLevel: text("access_level", { enum: ["public", "community", "restricted"] })
+      .notNull()
+      .default("public"),
+    communityBenefit: text("community_benefit").notNull().default("客家知識保存、教育與研究"),
+    consentConfirmed: integer("consent_confirmed", { mode: "boolean" }).notNull().default(false),
+    reviewGates: text("review_gates").notNull().default("{}"),
+    reviewerEmail: text("reviewer_email"),
+    reviewNote: text("review_note"),
+    reviewedAt: integer("reviewed_at"),
+    withdrawnAt: integer("withdrawn_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_governance_kind_access_dialect").on(
+      table.recordKind,
+      table.accessLevel,
+      table.dialect,
+    ),
+  ],
+);

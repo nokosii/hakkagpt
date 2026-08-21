@@ -1,5 +1,6 @@
 import { ensureSchema, getPlatformEnv, requestIdentity } from "@/db/runtime";
 import { googleDriveStatus, uploadKnowledgeToDrive } from "@/lib/google-drive";
+import { EMPTY_REVIEW_GATES, normalizeGovernance, type GovernanceMetadata } from "@/lib/governance";
 import { extractText, getDocumentProxy } from "unpdf";
 
 export const runtime = "edge";
@@ -67,12 +68,13 @@ async function saveSearchIndex(args: {
   ownerId: string;
   ownerEmail: string;
   createdAt: number;
+  governance: GovernanceMetadata;
 }) {
   const DB = await ensureSchema();
-  await DB.prepare(`INSERT INTO knowledge_documents (
+  await DB.batch([DB.prepare(`INSERT INTO knowledge_documents (
     id, file_name, file_type, object_key, byte_size, page_count, row_count,
     chunk_count, status, owner_id, owner_email, created_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?)`)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`)
     .bind(
       args.id,
       args.fileName,
@@ -86,7 +88,21 @@ async function saveSearchIndex(args: {
       args.ownerEmail,
       args.createdAt,
     )
-    .run();
+  , DB.prepare(`INSERT OR REPLACE INTO knowledge_governance (
+      record_id, record_kind, dialect, rights_holder, rights_basis, license,
+      access_level, community_benefit, consent_confirmed, review_gates, withdrawn_at, updated_at
+    ) VALUES (?, 'document', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`).bind(
+      args.id,
+      args.governance.dialect,
+      args.governance.rightsHolder,
+      args.governance.rightsBasis,
+      args.governance.license,
+      args.governance.accessLevel,
+      args.governance.communityBenefit,
+      args.governance.consentConfirmed ? 1 : 0,
+      JSON.stringify(EMPTY_REVIEW_GATES),
+      args.createdAt,
+    )]);
   for (let start = 0; start < args.chunks.length; start += 80) {
     await DB.batch(
       args.chunks.slice(start, start + 80).map((content, offset) =>
@@ -108,6 +124,21 @@ export async function POST(request: Request) {
     const lowerName = file.name.toLowerCase();
     const fileType = lowerName.endsWith(".csv") ? "csv" : lowerName.endsWith(".pdf") ? "pdf" : null;
     if (!fileType) return Response.json({ error: "目前只接受 .csv 與 .pdf" }, { status: 415 });
+    const governance = normalizeGovernance({
+      dialect: form.get("dialect"),
+      rightsHolder: form.get("rightsHolder"),
+      rightsBasis: form.get("rightsBasis"),
+      license: form.get("license"),
+      accessLevel: form.get("accessLevel"),
+      communityBenefit: form.get("communityBenefit"),
+      consentConfirmed: form.get("consentConfirmed") === "true",
+    });
+    if (governance.rightsHolder === "未標示") {
+      return Response.json({ error: "請填寫作者或權利持有人" }, { status: 400 });
+    }
+    if (!governance.consentConfirmed) {
+      return Response.json({ error: "請確認具備提交與社群使用這份資料的權利" }, { status: 400 });
+    }
 
     const buffer = await file.arrayBuffer();
     let extracted = "";
@@ -148,6 +179,9 @@ export async function POST(request: Request) {
         pageCount,
         rowCount,
         chunks,
+        governance,
+        ownerId: identity.id,
+        ownerEmail: identity.email,
       });
       storage = "google-drive";
       driveFileId = driveUpload.original.id;
@@ -165,6 +199,7 @@ export async function POST(request: Request) {
           ownerId: identity.id,
           ownerEmail: identity.email,
           createdAt: now,
+          governance,
         });
         databaseIndexed = true;
       } catch {
@@ -179,7 +214,12 @@ export async function POST(request: Request) {
       objectKey = `knowledge/${id}/${file.name.replace(/[^\p{L}\p{N}._-]+/gu, "-")}`;
       await platformEnv.KNOWLEDGE_FILES.put(objectKey, buffer, {
         httpMetadata: { contentType: mimeType },
-        customMetadata: { ownerId: identity.id, originalName: file.name },
+        customMetadata: {
+          ownerId: identity.id,
+          originalName: file.name,
+          dialect: governance.dialect,
+          accessLevel: governance.accessLevel,
+        },
       });
       await saveSearchIndex({
         id,
@@ -193,6 +233,7 @@ export async function POST(request: Request) {
         ownerId: identity.id,
         ownerEmail: identity.email,
         createdAt: now,
+        governance,
       });
       databaseIndexed = true;
     }
@@ -203,7 +244,7 @@ export async function POST(request: Request) {
       rowCount,
       pageCount,
       chunkCount: chunks.length,
-      status: "ready",
+      status: "pending",
       storage,
       driveFileId,
       databaseIndexed,

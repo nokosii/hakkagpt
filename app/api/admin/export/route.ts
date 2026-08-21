@@ -20,12 +20,20 @@ export async function POST(request: Request) {
       entry.author_id !== "system" && (!ids?.size || ids.has(entry.id)),
     );
     const rows = [
-      ["詞條名稱", "摘要", "完整內容", "參考來源", "狀態", "提交者", "審查備註", "建立時間", "審查時間"],
+      ["詞條名稱", "摘要", "完整內容", "參考來源", "腔別", "權利持有人", "權利依據", "授權條款", "存取層級", "社群利益", "同意確認", "審查閘門", "狀態", "提交者", "審查備註", "建立時間", "審查時間"],
       ...entries.map((entry) => [
         entry.term,
         entry.summary,
         entry.content,
         entry.source_url,
+        entry.governance.dialect,
+        entry.governance.rightsHolder,
+        entry.governance.rightsBasis,
+        entry.governance.license,
+        entry.governance.accessLevel,
+        entry.governance.communityBenefit,
+        entry.governance.consentConfirmed ? "是" : "否",
+        JSON.stringify(entry.review_gates),
         entry.status,
         entry.author_email,
         entry.review_note,

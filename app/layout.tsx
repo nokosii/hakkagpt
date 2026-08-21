@@ -7,7 +7,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = requestHeaders.get("x-forwarded-host") || requestHeaders.get("host") || "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") || (host.startsWith("localhost") ? "http" : "https");
   const imageUrl = `${protocol}://${host}/og.png`;
-  const description = "結合 RAG、HakkaGPT 與公眾共編的客家知識 AI 平台。";
+  const description = "結合社群治理型 RAG、六腔證據揭露、HakkaGPT 與公眾共編的客家知識 AI 平台。";
   return {
     title: "客天光｜客家GPT",
     description,

@@ -80,6 +80,25 @@ export async function ensureSchema(): Promise<D1Database> {
     )`),
     DB.prepare(`CREATE INDEX IF NOT EXISTS idx_chunks_document_index
       ON knowledge_chunks(document_id, chunk_index)`),
+    DB.prepare(`CREATE TABLE IF NOT EXISTS knowledge_governance (
+      record_id TEXT PRIMARY KEY,
+      record_kind TEXT NOT NULL,
+      dialect TEXT NOT NULL DEFAULT '未標示',
+      rights_holder TEXT NOT NULL DEFAULT '未標示',
+      rights_basis TEXT NOT NULL DEFAULT '待確認',
+      license TEXT NOT NULL DEFAULT '未標示',
+      access_level TEXT NOT NULL DEFAULT 'public',
+      community_benefit TEXT NOT NULL DEFAULT '客家知識保存、教育與研究',
+      consent_confirmed INTEGER NOT NULL DEFAULT 0,
+      review_gates TEXT NOT NULL DEFAULT '{}',
+      reviewer_email TEXT,
+      review_note TEXT,
+      reviewed_at INTEGER,
+      withdrawn_at INTEGER,
+      updated_at INTEGER NOT NULL
+    )`),
+    DB.prepare(`CREATE INDEX IF NOT EXISTS idx_governance_kind_access_dialect
+      ON knowledge_governance(record_kind, access_level, dialect)`),
   ]);
 
   const count = await DB.prepare(
