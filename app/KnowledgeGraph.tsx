@@ -373,8 +373,9 @@ export function KnowledgeGraphPanel({ graph, loading, expandingNodeId, onExpand 
     <section className="graph-panel" aria-labelledby="knowledge-graph-title">
       <header className="graph-head">
         <div>
-          <span className="eyebrow">KNOWLEDGE STAR ATLAS</span>
-          <h2 id="knowledge-graph-title">知識星脈</h2>
+          <span className="eyebrow">HAKKA KNOWLEDGE MAP</span>
+          <h2 id="knowledge-graph-title">客家圖講</h2>
+          <small className="graph-policy">依提問相關度生成</small>
         </div>
         <div className="graph-stats" aria-label="圖譜統計">
           <b>{graph?.nodes.length || 0}</b><span>節點</span>
@@ -387,7 +388,7 @@ export function KnowledgeGraphPanel({ graph, loading, expandingNodeId, onExpand 
           ref={canvasRef}
           className="graph-canvas"
           tabIndex={0}
-          aria-label="互動式客家知識星脈。點選節點可產生下一層關聯，拖曳背景可平移，滾輪可縮放。"
+          aria-label="互動式客家圖講。點選節點可產生下一層關聯，拖曳背景可平移，滾輪可縮放。"
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
@@ -399,7 +400,7 @@ export function KnowledgeGraphPanel({ graph, loading, expandingNodeId, onExpand 
         {!graph ? (
           <div className={`graph-empty ${loading ? "loading" : ""}`}>
             <span aria-hidden="true">✦</span>
-            <b>{loading ? "正在生成知識星脈" : "等待一次提問"}</b>
+            <b>{loading ? "正在生成客家圖講" : "等待一次提問"}</b>
             <p>{loading ? "回答與圖譜同步整理中" : "送出問題後，可從中心節點一路點選探索。"}</p>
           </div>
         ) : null}
@@ -407,7 +408,7 @@ export function KnowledgeGraphPanel({ graph, loading, expandingNodeId, onExpand 
           <button type="button" onClick={fitGraph} disabled={!graph} title="顯示全部節點">置中</button>
           <span>{Math.round(viewport.scale * 100)}%</span>
         </div>
-        {expandingNodeId ? <div className="graph-expanding"><i />正在延伸星脈</div> : null}
+        {expandingNodeId ? <div className="graph-expanding"><i />正在延伸圖講</div> : null}
       </div>
 
       {selectedNode ? (

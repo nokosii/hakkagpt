@@ -21,7 +21,8 @@ test("server-renders the 客天光 platform", async () => {
   assert.match(html, /客家GPT/);
   assert.match(html, /HakkaGPT：結合RAG與大型語言模型之客家知識AI專家對話系統/);
   assert.match(html, /知識治理/);
-  assert.match(html, /知識星脈/);
+  assert.match(html, /客家圖講/);
+  assert.match(html, /依提問相關度生成/);
   assert.match(html, /點選節點可產生下一層關聯/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/);
 });
@@ -68,11 +69,13 @@ test("validates graph expansion before calling the model", async () => {
 });
 
 test("declares durable knowledge storage and product metadata", async () => {
-  const [hosting, layout, page, platform, packageJson] = await Promise.all([
+  const [hosting, layout, page, platform, knowledge, graph, packageJson] = await Promise.all([
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/HakkaPlatform.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/knowledge.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/knowledge-graph.ts", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
   assert.match(hosting, /"d1": "DB"/);
@@ -82,5 +85,9 @@ test("declares durable knowledge storage and product metadata", async () => {
   assert.match(page, /HakkaPlatform/);
   assert.match(platform, /CARE \+ OCAP KNOWLEDGE GOVERNANCE/);
   assert.match(platform, /六腔不平均/);
+  assert.match(knowledge, /source\.relevance >= minimumRelevance\(question\)/);
+  assert.match(knowledge, /b\.relevance - a\.relevance/);
+  assert.match(graph, /selectGraphEvidenceSources/);
+  assert.match(graph, /source\.kind !== "document" \|\| source\.relevance >= documentThreshold/);
   assert.match(packageJson, /"name": "ketiengong-hakka-gpt"/);
 });

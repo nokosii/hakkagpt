@@ -64,7 +64,6 @@ export async function POST(request: Request) {
       generateInitialKnowledgeGraph({
         question,
         sources,
-        context,
         dialect: dialect || "未指定",
       }),
     ]);

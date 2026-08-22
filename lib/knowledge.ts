@@ -18,6 +18,7 @@ export type KnowledgeSource = {
   status: "pending" | "approved" | "ready";
   excerpt: string;
   sourceUrl?: string | null;
+  relevance: number;
   score: number;
   dialect: DialectTag;
   rightsHolder: string;
@@ -83,6 +84,13 @@ function relevance(question: string, title: string, content: string): number {
   return score;
 }
 
+function minimumRelevance(question: string) {
+  const compactLength = question.replace(/[\p{P}\p{S}\s]/gu, "").length;
+  if (compactLength <= 3) return 1;
+  if (compactLength <= 7) return 2;
+  return 3;
+}
+
 function dialectScore(sourceDialect: DialectTag, selectedDialect?: DialectTag) {
   if (!selectedDialect || selectedDialect === "未標示") return 0;
   if (sourceDialect === selectedDialect) return 14;
@@ -101,6 +109,7 @@ function toSource(args: {
   governance: GovernanceMetadata;
   selectedDialect?: DialectTag;
 }): KnowledgeSource {
+  const textRelevance = Math.max(0, args.baseScore);
   return {
     id: args.id,
     title: args.title,
@@ -108,7 +117,10 @@ function toSource(args: {
     status: args.status,
     excerpt: args.excerpt,
     sourceUrl: args.sourceUrl,
-    score: args.baseScore + dialectScore(args.governance.dialect, args.selectedDialect),
+    relevance: textRelevance,
+    score: textRelevance > 0
+      ? textRelevance + dialectScore(args.governance.dialect, args.selectedDialect)
+      : 0,
     dialect: args.governance.dialect,
     rightsHolder: args.governance.rightsHolder,
     rightsBasis: args.governance.rightsBasis,
@@ -222,8 +234,7 @@ export async function retrieveKnowledge(question: string, selectedDialect?: Dial
     status: row.status,
     excerpt: `${row.summary}\n${row.content}`,
     sourceUrl: row.source_url,
-    baseScore: relevance(question, row.term, `${row.summary}\n${row.content}`) +
-      (row.status === "pending" ? 2 : 0),
+    baseScore: relevance(question, row.term, `${row.summary}\n${row.content}`),
     governance,
     selectedDialect,
   }));
@@ -269,8 +280,8 @@ export async function retrieveKnowledge(question: string, selectedDialect?: Dial
   }
 
   const sources = [...uniqueSources.values()]
-    .filter((source) => source.score > 0)
-    .sort((a, b) => b.score - a.score)
+    .filter((source) => source.relevance >= minimumRelevance(question))
+    .sort((a, b) => b.relevance - a.relevance || b.score - a.score)
     .slice(0, 5);
   const context = sources
     .map((source, index) => {
