@@ -17,22 +17,6 @@ function asksForIdentifiableStyleImitation(question: string) {
   return creationIntent.test(question) && identifiableTarget.test(question);
 }
 
-function indicatesInsufficientPlatformEvidence(answer: string) {
-  return [
-    "平台證據不足",
-    "未包含任何",
-    "沒有提及",
-    "並無此項內容",
-    "並無關於",
-    "無法回答此問題",
-    "無法回答這個問題",
-    "在無正確資料",
-    "沒有相關資料",
-    "找不到相關資料",
-    "無相關紀錄或資料",
-  ].some((phrase) => answer.includes(phrase));
-}
-
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as { question?: string };
@@ -54,7 +38,7 @@ export async function POST(request: Request) {
     const { sources, context, evidenceState } = await retrieveKnowledge(question);
     const romanizationRequested = explicitlyRequestsHakkaRomanization(question);
     const prompt = [
-      "你是『客天光・客家GPT』的客家知識專家。請直接回答使用者問題。",
+      "你是『客天光・客家GPT』的客家知識專家。HakkaGPT API 是主要回答與檢索引擎，請直接回答使用者問題。",
       "回答格式規則：全文不得出現星號字元，不使用 Markdown 粗體或斜體語法。預設只使用繁體中文與必要的客語漢字，不主動附上客語拼音、羅馬字或聲調標記。",
       romanizationRequested
         ? "使用者已明確要求客語拼音或發音，本題可以清楚分列客語拼音。"
@@ -63,8 +47,8 @@ export async function POST(request: Request) {
       "只可把下列 RAG 資料稱為本平台證據。每個由平台資料支持的重點，請在句末標示相應的〔資料 1〕格式。不得改寫來源作者、權利與腔別資訊。HakkaGPT 自身知識或檢索結果不可標成平台資料。",
       "回答文學問題時可分析特徵與教學方法，但不得抄襲，也不得模仿可辨識作者的風格產生新作品。",
       context
-        ? "以下資料由本平台的社群治理型 RAG 檢索提供；暫行內容可先供查詢，但回答時須明確標示尚未通過技術適切性與文化安全雙閘門。"
-        : "本題沒有命中本平台 RAG 資料。仍須使用 HakkaGPT API 自身可用的知識與檢索能力回答，但回答開頭必須先寫「平台證據不足。」；這只表示本平台尚無可引用資料，不代表停止回答。",
+        ? "以下資料是本平台 RAG 提供的輔助資料；只在確實相關時引用。暫行內容可先供查詢，但回答時須明確標示尚未通過技術適切性與文化安全雙閘門。"
+        : "本題沒有命中本平台 RAG 輔助資料。請直接使用 HakkaGPT API 自身可用的知識與檢索能力回答，不要提及平台資料是否命中，也不要加入平台資料不足的提示。",
       context || "",
       `使用者問題：${question}`,
     ].filter(Boolean).join("\n\n");
@@ -77,14 +61,13 @@ export async function POST(request: Request) {
       }),
     ]);
     const cleanedAnswer = answer.replace(/\*/g, "").trim();
-    const platformEvidenceInsufficient = !sources.length || indicatesInsufficientPlatformEvidence(cleanedAnswer);
-    const finalAnswer = platformEvidenceInsufficient && !cleanedAnswer.startsWith("平台證據不足")
-      ? `平台證據不足。\n\n${cleanedAnswer}`
-      : cleanedAnswer;
+    const finalAnswer = cleanedAnswer
+      .replace(/^平台證據不足[。！!：:\s]*/u, "")
+      .trim() || "HakkaGPT 暫時沒有提供回答。";
     return Response.json({
       answer: finalAnswer,
-      sources: platformEvidenceInsufficient ? [] : sources,
-      evidenceState: platformEvidenceInsufficient ? "model-only" : evidenceState,
+      sources,
+      evidenceState: sources.length ? evidenceState : "hakkagpt",
       graph,
     });
   } catch (error) {

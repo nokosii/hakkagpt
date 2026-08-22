@@ -196,7 +196,7 @@ export function HakkaPlatform() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
-      text: "日安，我係客天光。您可以問客語、客庄歷史、信仰、文學或生活文化；回答會優先參考平台共編與匯入的知識，再由 HakkaGPT 統整。",
+      text: "日安，我係客天光。您可以問客語、客庄歷史、信仰、文學或生活文化；由 HakkaGPT 主要回應，平台共編與匯入資料會在相關時提供輔助。",
     },
   ]);
   const [question, setQuestion] = useState("");
@@ -313,7 +313,7 @@ export function HakkaPlatform() {
         text: data.answer!,
         sources,
         evidenceState: data.evidenceState,
-        unresolvedQuestion: data.evidenceState === "model-only" ? nextQuestion : undefined,
+        unresolvedQuestion: data.evidenceState === "hakkagpt" ? nextQuestion : undefined,
       }]);
     } catch (error) {
       setMessages((current) => [
@@ -750,11 +750,11 @@ export function HakkaPlatform() {
                       <div className="message-meta">
                         <span>{message.role === "assistant" ? "客天光" : "你"}</span>
                         {message.role === "assistant" ? (
-                          <small>{message.evidenceState === "grounded" ? "HakkaGPT + 公開證據" : message.evidenceState === "blocked" ? "文學誠信防護" : message.evidenceState === "model-only" ? "平台證據不足 · HakkaGPT 回答" : "HakkaGPT 一般回答"}</small>
+                          <small>{message.evidenceState === "grounded" ? "HakkaGPT + 平台輔助資料" : message.evidenceState === "blocked" ? "文學誠信防護" : message.evidenceState === "hakkagpt" ? "HakkaGPT 主回答" : "HakkaGPT 回答"}</small>
                         ) : <small>提問</small>}
                       </div>
                       <div className="message-body">{message.text}</div>
-                      {message.evidenceState === "model-only" && message.unresolvedQuestion ? (
+                      {message.evidenceState === "hakkagpt" && message.unresolvedQuestion ? (
                         <div className="unresolved-followup">
                           <label>
                             <input
@@ -825,8 +825,8 @@ export function HakkaPlatform() {
                 />
                 <div className="evidence-section">
                   <div className="rail-heading">
-                    <span className="eyebrow">RAG EVIDENCE</span>
-                    <h2>這次回答參考了什麼</h2>
+                    <span className="eyebrow">RAG SUPPORT</span>
+                    <h2>平台提供的輔助資料</h2>
                   </div>
                   {latestSources.length ? latestSources.map((source, index) => (
                     <article className="source-card" key={source.id}>
@@ -849,9 +849,9 @@ export function HakkaPlatform() {
                   <div className="precedence-note">
                     <b>查詢優先規則</b>
                     <ol>
-                      <li><span>1</span>只取公開存取層</li>
-                      <li><span>2</span>保留資料原有腔別</li>
-                      <li><span>3</span>揭露來源與審查狀態</li>
+                      <li><span>1</span>由 HakkaGPT 主要回答</li>
+                      <li><span>2</span>平台 RAG 僅作相關補充</li>
+                      <li><span>3</span>輔助資料保留來源與腔別</li>
                     </ol>
                   </div>
                 </div>

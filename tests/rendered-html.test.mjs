@@ -94,7 +94,8 @@ test("declares durable knowledge storage and product metadata", async () => {
   assert.match(platform, /本題確實與客家相關/);
   assert.match(platform, /自行編寫問題及解答/);
   assert.match(platform, /列為待解決之客家相關問題/);
-  assert.match(platform, /平台證據不足 · HakkaGPT 回答/);
+  assert.match(platform, /HakkaGPT 主回答/);
+  assert.match(platform, /平台 RAG 僅作相關補充/);
   assert.match(graphComponent, /requestFullscreen/);
   assert.match(graphComponent, /expandedNodeIds\.includes/);
   assert.match(graphComponent, /已展開/);
@@ -115,9 +116,10 @@ test("declares durable knowledge storage and product metadata", async () => {
   assert.doesNotMatch(chatRoute, /不得搜尋、蒐集或補充網路資料/);
   assert.doesNotMatch(chatRoute, /本提問與客家無涉或是本系統尚未收集相關資料/);
   assert.match(chatRoute, /只有引用資料本身明確標示腔別時/);
-  assert.match(chatRoute, /indicatesInsufficientPlatformEvidence/);
-  assert.match(chatRoute, /仍須使用 HakkaGPT API 自身可用的知識與檢索能力回答/);
-  assert.match(chatRoute, /platformEvidenceInsufficient \? "model-only"/);
+  assert.doesNotMatch(chatRoute, /indicatesInsufficientPlatformEvidence/);
+  assert.match(chatRoute, /HakkaGPT API 是主要回答與檢索引擎/);
+  assert.match(chatRoute, /evidenceState: sources\.length \? evidenceState : "hakkagpt"/);
+  assert.match(chatRoute, /不要加入平台資料不足的提示/);
   assert.doesNotMatch(chatRoute, /if \(!sources\.length\) \{\s*return Response\.json/);
   assert.match(unresolvedRoute, /accessLevel: "community"/);
   assert.match(packageJson, /"name": "ketiengong-hakka-gpt"/);
