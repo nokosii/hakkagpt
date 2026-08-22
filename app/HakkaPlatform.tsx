@@ -313,7 +313,7 @@ export function HakkaPlatform() {
         text: data.answer!,
         sources,
         evidenceState: data.evidenceState,
-        unresolvedQuestion: data.evidenceState === "hakkagpt" ? nextQuestion : undefined,
+        unresolvedQuestion: data.evidenceState === "hakkagpt" || data.evidenceState === "grounded" ? nextQuestion : undefined,
       }]);
     } catch (error) {
       setMessages((current) => [
@@ -340,7 +340,7 @@ export function HakkaPlatform() {
       const response = await fetch("/api/unresolved", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: unresolvedQuestion, confirmedHakkaRelated: true }),
+        body: JSON.stringify({ question: unresolvedQuestion, answerNotFullyCorrect: true }),
       });
       const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error || "待解問題儲存失敗");
@@ -754,7 +754,7 @@ export function HakkaPlatform() {
                         ) : <small>提問</small>}
                       </div>
                       <div className="message-body">{message.text}</div>
-                      {message.evidenceState === "hakkagpt" && message.unresolvedQuestion ? (
+                      {(message.evidenceState === "hakkagpt" || message.evidenceState === "grounded") && message.unresolvedQuestion ? (
                         <div className="unresolved-followup">
                           <label>
                             <input
@@ -762,9 +762,9 @@ export function HakkaPlatform() {
                               checked={Boolean(confirmedUnresolved[index])}
                               onChange={(event) => setConfirmedUnresolved((current) => ({ ...current, [index]: event.target.checked }))}
                             />
-                            本題確實與客家相關
+                            本題回答並非完全正確
                           </label>
-                          <p>確認後可自行提供問題與解答，或列入待解清單，協助補足平台知識。</p>
+                          <p>勾選後可自行修正問題與解答，或列入待解清單，協助補足平台知識。</p>
                           <div>
                             <button
                               type="button"
@@ -831,7 +831,7 @@ export function HakkaPlatform() {
                   {latestSources.length ? latestSources.map((source, index) => (
                     <article className="source-card" key={source.id}>
                       <div className="source-top">
-                        <span>0{index + 1}</span>
+                        <span>平台資料 {index + 1}</span>
                         <b className={`source-status ${source.status}`}>{statusLabel(source.status)}</b>
                       </div>
                       <h3>{source.title}</h3>

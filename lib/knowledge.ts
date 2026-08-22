@@ -287,7 +287,7 @@ export async function retrieveKnowledge(question: string, selectedDialect?: Dial
     .map((source, index) => {
       const status = source.status === "pending" ? "暫行內容，尚未通過雙閘門" : "已審核或正式匯入";
       const sourceLink = source.sourceUrl ? `｜原始來源 ${source.sourceUrl}` : "";
-      return `[資料 ${index + 1}｜${source.title}｜${status}｜腔別 ${source.dialect}｜權利持有人 ${source.rightsHolder}｜權利依據 ${source.rightsBasis}｜授權 ${source.license}｜${ACCESS_LABELS[source.accessLevel]}${sourceLink}]\n${source.excerpt.slice(0, 2200)}`;
+      return `[平台資料 ${index + 1}｜${source.title}｜${status}｜腔別 ${source.dialect}｜權利持有人 ${source.rightsHolder}｜權利依據 ${source.rightsBasis}｜授權 ${source.license}｜${ACCESS_LABELS[source.accessLevel]}${sourceLink}]\n${source.excerpt.slice(0, 2200)}`;
     })
     .join("\n\n")
     .slice(0, 11_000);

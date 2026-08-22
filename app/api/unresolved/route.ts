@@ -6,10 +6,10 @@ export const runtime = "edge";
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { question?: string; confirmedHakkaRelated?: boolean };
+    const body = (await request.json()) as { question?: string; answerNotFullyCorrect?: boolean };
     const question = String(body.question || "").trim();
-    if (!body.confirmedHakkaRelated) {
-      return Response.json({ error: "請先確認本題確實與客家相關" }, { status: 400 });
+    if (!body.answerNotFullyCorrect) {
+      return Response.json({ error: "請先確認本題回答並非完全正確" }, { status: 400 });
     }
     if (question.length < 2 || question.length > 1200) {
       return Response.json({ error: "問題需為 2 至 1200 字" }, { status: 400 });
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
       term: question.slice(0, 80),
       slug: `待解-${id}`,
       summary: "待解決之客家相關問題",
-      content: `問題：${question}\n\n本題已由使用者確認與客家相關，尚待社群補充解答。`,
+      content: `問題：${question}\n\n使用者認為本題回答並非完全正確，尚待社群補充或修正解答。`,
       source_url: null,
       status: "pending",
       author_id: identity.id,

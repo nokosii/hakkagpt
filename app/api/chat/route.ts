@@ -1,5 +1,5 @@
 import { askHakkaGpt } from "@/lib/hakkagpt";
-import { retrieveKnowledge } from "@/lib/knowledge";
+import { retrieveKnowledge, type KnowledgeSource } from "@/lib/knowledge";
 import {
   buildBlockedKnowledgeGraph,
   generateInitialKnowledgeGraph,
@@ -15,6 +15,16 @@ function asksForIdentifiableStyleImitation(question: string) {
   const creationIntent = /(模仿|仿作|仿寫|照(?:著|着)?|沿用|複製).{0,28}(風格|口吻|筆法|文風)|(用|以).{1,20}(風格|口吻|筆法|文風).{0,20}(寫|創作|生成)/;
   const identifiableTarget = /(作家|詩人|作者|老師|先生|女士|[\p{Script=Han}]{2,5}(?:的|之)?(?:風格|口吻|筆法|文風))/u;
   return creationIntent.test(question) && identifiableTarget.test(question);
+}
+
+function labelAnswerSources(answer: string, sources: KnowledgeSource[]) {
+  return answer.replace(/〔(?:平台)?資料\s*(\d+)(?:\s*[：:｜|]\s*[^〕]*)?〕/gu, (_marker, rawIndex: string) => {
+    const index = Number(rawIndex);
+    const source = Number.isInteger(index) && index > 0 ? sources[index - 1] : undefined;
+    if (!source) return "";
+    const title = source.title.replace(/[〔〕\r\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 56) || "未命名來源";
+    return `〔平台資料 ${index}：${title}〕`;
+  }).replace(/[ \t]{2,}/g, " ").trim();
 }
 
 export async function POST(request: Request) {
@@ -44,7 +54,7 @@ export async function POST(request: Request) {
         ? "使用者已明確要求客語拼音或發音，本題可以清楚分列客語拼音。"
         : "使用者未要求客語拼音，本題禁止列出客語拼音、羅馬字或聲調標記。",
       "使用者不指定回答腔別。不得自行統一或指定腔別；只有引用資料本身明確標示腔別時，才在相應內容中說明該資料的腔別。資料未標示腔別時不要自行補上。",
-      "只可把下列 RAG 資料稱為本平台證據。每個由平台資料支持的重點，請在句末標示相應的〔資料 1〕格式。不得改寫來源作者、權利與腔別資訊。HakkaGPT 自身知識或檢索結果不可標成平台資料。",
+      "只可把下列 RAG 資料稱為本平台證據。每個由平台資料支持的重點，請在句末標示〔平台資料 1：實際來源名稱〕。不得只寫〔資料 1〕這種無來源名稱的編號，也不得改寫來源作者、權利與腔別資訊。HakkaGPT 自身的檢索來源須直接標示實際來源名稱或網址，不可標成平台資料；若無法取得來源名稱，就不要產生引用編號。",
       "回答文學問題時可分析特徵與教學方法，但不得抄襲，也不得模仿可辨識作者的風格產生新作品。",
       context
         ? "以下資料是本平台 RAG 提供的輔助資料；只在確實相關時引用。暫行內容可先供查詢，但回答時須明確標示尚未通過技術適切性與文化安全雙閘門。"
@@ -61,7 +71,7 @@ export async function POST(request: Request) {
       }),
     ]);
     const cleanedAnswer = answer.replace(/\*/g, "").trim();
-    const finalAnswer = cleanedAnswer
+    const finalAnswer = labelAnswerSources(cleanedAnswer, sources)
       .replace(/^平台證據不足[。！!：:\s]*/u, "")
       .trim() || "HakkaGPT 暫時沒有提供回答。";
     return Response.json({
