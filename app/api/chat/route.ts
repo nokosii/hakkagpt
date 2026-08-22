@@ -1,12 +1,14 @@
 import { askHakkaGpt } from "@/lib/hakkagpt";
 import { retrieveKnowledge } from "@/lib/knowledge";
-import { DIALECTS, type DialectTag } from "@/lib/governance";
 import {
   buildBlockedKnowledgeGraph,
+  buildFallbackKnowledgeGraph,
   generateInitialKnowledgeGraph,
 } from "@/lib/knowledge-graph";
 
 export const runtime = "edge";
+
+const NO_PLATFORM_EVIDENCE = "本提問與客家無涉或是本系統尚未收集相關資料。不需蒐集網路資料。";
 
 function explicitlyRequestsHakkaRomanization(question: string) {
   return /客語拼音|拼音|羅馬字|標音|讀音|發音|怎麼唸|怎麼讀|仰般讀|聲調|腔調拼音/i.test(question);
@@ -20,26 +22,32 @@ function asksForIdentifiableStyleImitation(question: string) {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { question?: string; dialect?: string };
+    const body = (await request.json()) as { question?: string };
     const question = String(body.question || "").trim();
     if (question.length < 2 || question.length > 1200) {
       return Response.json({ error: "請輸入 2 至 1200 字的問題" }, { status: 400 });
     }
 
-    const dialect = DIALECTS.includes(body.dialect as DialectTag)
-      ? body.dialect as DialectTag
-      : undefined;
     if (asksForIdentifiableStyleImitation(question)) {
       return Response.json({
         answer: "為維護文學誠信與作者權益，我不能依可辨識作家或詩人的風格仿作新作品。我可以改為分析其作品特徵、比較修辭與敘事方法，或依你指定的題材、節奏、視角等非特定元素創作原創文本。",
         sources: [],
         evidenceState: "blocked",
         safetyReason: "可辨識作者風格仿作防護",
-        graph: buildBlockedKnowledgeGraph(question, dialect || "未指定"),
+        graph: buildBlockedKnowledgeGraph(question, "未標示"),
       });
     }
 
-    const { sources, context, evidenceState } = await retrieveKnowledge(question, dialect);
+    const { sources, context, evidenceState } = await retrieveKnowledge(question);
+    if (!sources.length) {
+      return Response.json({
+        answer: NO_PLATFORM_EVIDENCE,
+        sources: [],
+        evidenceState: "unresolved",
+        graph: buildFallbackKnowledgeGraph(question, "未標示"),
+      });
+    }
+
     const romanizationRequested = explicitlyRequestsHakkaRomanization(question);
     const prompt = [
       "你是『客天光・客家GPT』的客家知識專家。請直接回答使用者問題。",
@@ -47,15 +55,11 @@ export async function POST(request: Request) {
       romanizationRequested
         ? "使用者已明確要求客語拼音或發音，本題可以清楚分列客語拼音。"
         : "使用者未要求客語拼音，本題禁止列出客語拼音、羅馬字或聲調標記。",
-      dialect && dialect !== "未標示"
-        ? `本題指定 ${dialect} 腔。優先使用相同腔別證據；引用其他腔別時必須明確標示跨腔，不可把不同腔別默默同質化。`
-        : "本題未指定腔別。回答涉及客語差異時，須保留來源的腔別標示，不可把各腔平均化或視為完全相同。",
+      "使用者不指定回答腔別。不得自行統一或指定腔別；只有引用資料本身明確標示腔別時，才在相應內容中說明該資料的腔別。資料未標示腔別時不要自行補上。",
       "只可把下列 RAG 資料稱為平台證據。每個由資料支持的重點，請在句末標示相應的〔資料 1〕格式。不得改寫來源作者、權利與腔別資訊。",
-      "若資料不足，先明確說明平台證據不足；不得捏造引文、出處、作者、腔別或文化細節，也不得把模型記憶假稱為檢索結果。",
+      "不得搜尋、蒐集或補充網路資料，只能使用下列平台 RAG 資料。不得捏造引文、出處、作者、腔別或文化細節，也不得把模型記憶假稱為檢索結果。",
       "回答文學問題時可分析特徵與教學方法，但不得抄襲，也不得模仿可辨識作者的風格產生新作品。",
-      context
-        ? "以下資料由本平台的社群治理型 RAG 檢索提供；暫行內容可先供查詢，但回答時須明確標示尚未通過技術適切性與文化安全雙閘門。"
-        : "本題沒有命中公開層平台資料。可提供審慎的一般說明，但開頭必須明示『平台證據不足』，且不可製造引用標記。",
+      "以下資料由本平台的社群治理型 RAG 檢索提供；暫行內容可先供查詢，但回答時須明確標示尚未通過技術適切性與文化安全雙閘門。",
       context || "",
       `使用者問題：${question}`,
     ].filter(Boolean).join("\n\n");
@@ -64,14 +68,22 @@ export async function POST(request: Request) {
       generateInitialKnowledgeGraph({
         question,
         sources,
-        dialect: dialect || "未指定",
+        dialect: "未標示",
       }),
     ]);
+    const cleanedAnswer = answer.replace(/\*/g, "").trim();
+    if (cleanedAnswer.includes("平台證據不足")) {
+      return Response.json({
+        answer: NO_PLATFORM_EVIDENCE,
+        sources: [],
+        evidenceState: "unresolved",
+        graph: buildFallbackKnowledgeGraph(question, "未標示"),
+      });
+    }
     return Response.json({
-      answer: answer.replace(/\*/g, "").trim(),
+      answer: cleanedAnswer,
       sources,
       evidenceState,
-      dialect: dialect || "未指定",
       graph,
     });
   } catch (error) {

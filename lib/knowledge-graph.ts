@@ -186,7 +186,6 @@ export async function generateInitialKnowledgeGraph(args: {
     "只輸出一個合法 JSON 物件，不要 Markdown，不要說明文字，不要星號，不要客語拼音。",
     "JSON 格式：{\"nodes\":[{\"label\":\"2至14字節點名稱\",\"summary\":\"一至兩句具體說明\",\"kind\":\"concept或culture或dialect或person或place或event\",\"relation\":\"與中心問題的關係\",\"impact\":60,\"evidenceRefs\":[1]}]}",
     "產出 4 至 6 個彼此不重複的具體節點。只根據下方問題與通過相關度門檻的證據整理；沒有列出的上傳資料不得加入圖譜。資料只作為產生概念的背景，不得建立資料來源、文件、RAG 證據或引用節點，也不得建立來源到概念的連線。不得產生名稱為平台證據不足或待探索的佔位節點，relation 也不得使用待探索。證據不足時仍不可捏造人名、作品、出處或歷史事實。",
-    `回答腔別：${args.dialect || "未指定"}`,
     `中心問題：${cleanText(args.question, 1200)}`,
     evidence,
   ].filter(Boolean).join("\n\n");
@@ -247,7 +246,6 @@ export async function expandKnowledgeGraph(args: {
     `這是第 ${Math.max(1, args.iteration)} 次延伸。產出 4 至 6 個比母節點更具體或能補充不同面向的新節點。`,
     "不得重複已存在節點。資料不足時以待查證或研究方向表述，不可捏造人名、作品、出處或歷史事實。",
     `原始問題：${cleanText(args.rootQuestion, 1200)}`,
-    `回答腔別：${args.dialect || "未指定"}`,
     `母節點：${cleanText(args.focus.label, 80)}`,
     `母節點說明：${cleanText(args.focus.summary, 500)}`,
     `已存在節點：\n${known}`,

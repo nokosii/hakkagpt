@@ -36,7 +36,7 @@ type Source = {
   accessLevel: AccessLevel;
   communityBenefit: string;
 };
-type ChatMessage = { role: "user" | "assistant"; text: string; sources?: Source[]; evidenceState?: string; dialect?: Dialect };
+type ChatMessage = { role: "user" | "assistant"; text: string; sources?: Source[]; evidenceState?: string; unresolvedQuestion?: string };
 type StatusData = {
   apiConnected: boolean;
   graphEnabled?: boolean;
@@ -200,8 +200,11 @@ export function HakkaPlatform() {
     },
   ]);
   const [question, setQuestion] = useState("");
-  const [selectedDialect, setSelectedDialect] = useState<Dialect>("未標示");
   const [asking, setAsking] = useState(false);
+  const [confirmedUnresolved, setConfirmedUnresolved] = useState<Record<number, boolean>>({});
+  const [unresolvedBusyIndex, setUnresolvedBusyIndex] = useState<number | null>(null);
+  const [unresolvedActions, setUnresolvedActions] = useState<Record<number, "editing" | "queued">>({});
+  const [contributionSeed, setContributionSeed] = useState("");
   const [latestSources, setLatestSources] = useState<Source[]>([]);
   const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeGraph | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
@@ -287,12 +290,12 @@ export function HakkaPlatform() {
     setGraphExpansionCounts({});
     graphExpansionLocksRef.current.clear();
     setGraphLoading(true);
-    setMessages((current) => [...current, { role: "user", text: nextQuestion, dialect: selectedDialect }]);
+    setMessages((current) => [...current, { role: "user", text: nextQuestion }]);
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: nextQuestion, dialect: selectedDialect }),
+        body: JSON.stringify({ question: nextQuestion }),
       });
       const data = (await response.json()) as {
         answer?: string;
@@ -305,7 +308,13 @@ export function HakkaPlatform() {
       const sources = data.sources || [];
       setLatestSources(sources);
       setKnowledgeGraph(data.graph || null);
-      setMessages((current) => [...current, { role: "assistant", text: data.answer!, sources, evidenceState: data.evidenceState }]);
+      setMessages((current) => [...current, {
+        role: "assistant",
+        text: data.answer!,
+        sources,
+        evidenceState: data.evidenceState,
+        unresolvedQuestion: data.evidenceState === "unresolved" ? nextQuestion : undefined,
+      }]);
     } catch (error) {
       setMessages((current) => [
         ...current,
@@ -314,6 +323,34 @@ export function HakkaPlatform() {
     } finally {
       setAsking(false);
       setGraphLoading(false);
+    }
+  }
+
+  function beginUnresolvedContribution(index: number, unresolvedQuestion: string) {
+    if (!confirmedUnresolved[index]) return;
+    setContributionSeed(unresolvedQuestion);
+    setUnresolvedActions((current) => ({ ...current, [index]: "editing" }));
+    setActiveView("contribute");
+  }
+
+  async function queueUnresolvedQuestion(index: number, unresolvedQuestion: string) {
+    if (!confirmedUnresolved[index] || unresolvedBusyIndex !== null) return;
+    setUnresolvedBusyIndex(index);
+    try {
+      const response = await fetch("/api/unresolved", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: unresolvedQuestion, confirmedHakkaRelated: true }),
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(data.error || "待解問題儲存失敗");
+      setUnresolvedActions((current) => ({ ...current, [index]: "queued" }));
+      setNotice("已列為待解決之客家相關問題，後續可由管理者審查、補充或刪除。");
+      await refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "待解問題儲存失敗");
+    } finally {
+      setUnresolvedBusyIndex(null);
     }
   }
 
@@ -383,13 +420,15 @@ export function HakkaPlatform() {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    const originalQuestion = String(form.get("originalQuestion") || "").trim();
+    const submittedContent = String(form.get("content") || "").trim();
     const response = await fetch("/api/knowledge", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         term: form.get("term"),
         summary: form.get("summary"),
-        content: form.get("content"),
+        content: originalQuestion ? `問題：${originalQuestion}\n\n解答：${submittedContent}` : submittedContent,
         sourceUrl: form.get("sourceUrl"),
         governance: {
           dialect: form.get("dialect"),
@@ -408,6 +447,7 @@ export function HakkaPlatform() {
       return;
     }
     formElement.reset();
+    setContributionSeed("");
     setNotice("詞條已送出。公開層內容會以待審標示暫行查詢；社群限定與受限內容不會送入公開回答。");
     await refresh();
   }
@@ -710,10 +750,35 @@ export function HakkaPlatform() {
                       <div className="message-meta">
                         <span>{message.role === "assistant" ? "客天光" : "你"}</span>
                         {message.role === "assistant" ? (
-                          <small>{message.evidenceState === "grounded" ? "HakkaGPT + 公開證據" : message.evidenceState === "blocked" ? "文學誠信防護" : "HakkaGPT 一般回答"}</small>
-                        ) : <small>提問 · {message.dialect === "未標示" ? "未指定腔別" : message.dialect}</small>}
+                          <small>{message.evidenceState === "grounded" ? "HakkaGPT + 公開證據" : message.evidenceState === "blocked" ? "文學誠信防護" : message.evidenceState === "unresolved" ? "平台尚無相關資料" : "HakkaGPT 一般回答"}</small>
+                        ) : <small>提問</small>}
                       </div>
                       <div className="message-body">{message.text}</div>
+                      {message.evidenceState === "unresolved" && message.unresolvedQuestion ? (
+                        <div className="unresolved-followup">
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={Boolean(confirmedUnresolved[index])}
+                              onChange={(event) => setConfirmedUnresolved((current) => ({ ...current, [index]: event.target.checked }))}
+                            />
+                            本題確實與客家相關
+                          </label>
+                          <p>確認後可自行提供問題與解答，或列入待解清單。不會蒐集網路資料。</p>
+                          <div>
+                            <button
+                              type="button"
+                              disabled={!confirmedUnresolved[index]}
+                              onClick={() => beginUnresolvedContribution(index, message.unresolvedQuestion!)}
+                            >自行編寫問題及解答</button>
+                            <button
+                              type="button"
+                              disabled={!confirmedUnresolved[index] || unresolvedBusyIndex !== null || unresolvedActions[index] === "queued"}
+                              onClick={() => queueUnresolvedQuestion(index, message.unresolvedQuestion!)}
+                            >{unresolvedActions[index] === "queued" ? "已列入待解清單" : unresolvedBusyIndex === index ? "正在列入…" : "列為待解決之客家相關問題"}</button>
+                          </div>
+                        </div>
+                      ) : null}
                     </article>
                   ))}
                   {asking ? (
@@ -727,11 +792,6 @@ export function HakkaPlatform() {
                 <form className="ask-box" onSubmit={(event) => ask(event)}>
                   <div className="ask-settings">
                     <label htmlFor="question">想了解哪一段客家知識？</label>
-                    <label htmlFor="answer-dialect">回答腔別
-                      <select id="answer-dialect" value={selectedDialect} onChange={(event) => setSelectedDialect(event.target.value as Dialect)}>
-                        {dialects.map((dialect) => <option key={dialect} value={dialect}>{dialect === "未標示" ? "不指定，保留來源腔別" : dialect}</option>)}
-                      </select>
-                    </label>
                   </div>
                   <div className="ask-row">
                     <textarea
@@ -775,7 +835,7 @@ export function HakkaPlatform() {
                         <b className={`source-status ${source.status}`}>{statusLabel(source.status)}</b>
                       </div>
                       <h3>{source.title}</h3>
-                      <div className="source-governance"><span>{source.dialect}腔</span><span>{source.rightsHolder}</span><span>{source.rightsBasis}</span></div>
+                      <div className="source-governance">{source.dialect !== "未標示" ? <span>{source.dialect}腔</span> : null}<span>{source.rightsHolder}</span><span>{source.rightsBasis}</span></div>
                       <p>{source.excerpt.slice(0, 118)}{source.excerpt.length > 118 ? "…" : ""}</p>
                       <small className="source-license">{source.license} · {accessLabel(source.accessLevel)}</small>
                       {source.sourceUrl ? <a href={source.sourceUrl} target="_blank" rel="noreferrer">查看原始來源 ↗</a> : null}
@@ -790,7 +850,7 @@ export function HakkaPlatform() {
                     <b>查詢優先規則</b>
                     <ol>
                       <li><span>1</span>只取公開存取層</li>
-                      <li><span>2</span>優先相同腔別證據</li>
+                      <li><span>2</span>保留資料原有腔別</li>
                       <li><span>3</span>揭露來源與審查狀態</li>
                     </ol>
                   </div>
@@ -807,11 +867,12 @@ export function HakkaPlatform() {
                 <p>像 Wikipedia 一樣留下每次修訂。新版本送出後會先服務查詢，專家審查未通過時，系統自動回復最近的正式版本。</p>
               </header>
               <div className="workspace-grid">
-                <form className="editor-panel" onSubmit={submitEntry}>
-                  <div className="panel-title"><span>01</span><div><h2>新增或修訂詞條</h2><p>所有欄位都會保留在版本紀錄</p></div></div>
-                  <label>詞條名稱<input name="term" required minLength={2} maxLength={80} placeholder="例：新丁粄" /></label>
-                  <label>一句摘要<input name="summary" required minLength={4} maxLength={240} placeholder="用一句話說明這個詞條" /></label>
-                  <label>完整內容<textarea name="content" required minLength={10} maxLength={12000} rows={9} placeholder="說明由來、地區差異、使用情境與相關背景…" /></label>
+                <form key={contributionSeed || "blank-contribution"} className="editor-panel" onSubmit={submitEntry}>
+                  <div className="panel-title"><span>01</span><div><h2>{contributionSeed ? "補寫待解問題" : "新增或修訂詞條"}</h2><p>所有欄位都會保留在版本紀錄</p></div></div>
+                  {contributionSeed ? <label>客家相關問題<textarea name="originalQuestion" required minLength={2} maxLength={1200} rows={4} defaultValue={contributionSeed} /></label> : null}
+                  <label>詞條名稱<input name="term" required minLength={2} maxLength={80} defaultValue={contributionSeed.slice(0, 80)} placeholder="例：新丁粄" /></label>
+                  <label>{contributionSeed ? "解答摘要" : "一句摘要"}<input name="summary" required minLength={4} maxLength={240} placeholder={contributionSeed ? "用一句話摘要你的解答" : "用一句話說明這個詞條"} /></label>
+                  <label>{contributionSeed ? "完整解答" : "完整內容"}<textarea name="content" required minLength={10} maxLength={12000} rows={9} placeholder={contributionSeed ? "請寫下解答、脈絡、地區差異與相關背景…" : "說明由來、地區差異、使用情境與相關背景…"} /></label>
                   <label>參考來源（選填）<input name="sourceUrl" type="url" placeholder="https://" /></label>
                   <div className="governance-fields">
                     <label>腔別<select name="dialect" required defaultValue="未標示">{dialects.map((dialect) => <option key={dialect}>{dialect}</option>)}</select></label>
@@ -934,7 +995,7 @@ export function HakkaPlatform() {
               </header>
               <div className="governance-principles">
                 <article><span>01</span><h2>社群主權</h2><p>資料提交者必須標示權利依據與社群利益；管理者可更正、退回或刪除資料，受限內容不送進模型。</p></article>
-                <article><span>02</span><h2>六腔不平均</h2><p>四縣、海陸、大埔、饒平、詔安與南四縣分別標示。檢索優先同腔證據，跨腔引用必須說明。</p></article>
+                <article><span>02</span><h2>六腔不平均</h2><p>四縣、海陸、大埔、饒平、詔安與南四縣分別標示。引用資料明確標有腔別時，回答才說明該資料的腔別。</p></article>
                 <article><span>03</span><h2>證據可追溯</h2><p>回答旁揭露來源名稱、腔別、權利持有人、授權依據及暫行或正式狀態，不把模型記憶冒充文獻。</p></article>
                 <article><span>04</span><h2>文學誠信</h2><p>可協助分析、比較與教學，但拒絕模仿可辨識作者風格的新作，避免 AI 生成內容侵蝕作者權益。</p></article>
               </div>

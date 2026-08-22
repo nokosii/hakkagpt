@@ -100,16 +100,22 @@ main { min-height: calc(100vh - 72px); }
 .message-meta small { display: block; margin-top: 4px; color: var(--muted); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; }
 .message-body { padding-right: 8px; white-space: pre-wrap; font-family: "Noto Serif TC", serif; font-size: 15px; line-height: 1.9; }
 .message.user .message-body { color: var(--indigo); font-weight: 600; }
+.unresolved-followup { grid-column: 2; margin-top: 13px; padding: 15px 16px; border-left: 3px solid var(--amber); background: #fff7e5; }
+.unresolved-followup > label { display: flex; align-items: center; gap: 9px; color: var(--indigo); font-size: 12px; font-weight: 800; }
+.unresolved-followup input { width: 16px; height: 16px; accent-color: var(--vermilion); }
+.unresolved-followup p { margin: 8px 0 12px; color: var(--muted); font-size: 10px; line-height: 1.65; }
+.unresolved-followup > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.unresolved-followup button { min-height: 35px; padding: 8px 11px; border: 1px solid rgba(23,35,63,.28); background: white; color: var(--indigo); font-size: 10px; font-weight: 800; cursor: pointer; }
+.unresolved-followup button:last-child { background: var(--indigo); color: white; }
+.unresolved-followup button:disabled { opacity: .42; cursor: default; }
 .thinking-line { display: flex; gap: 7px; padding: 9px 0; }
 .thinking-line i { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); animation: pulse 1.2s infinite ease-in-out; }
 .thinking-line i:nth-child(2) { animation-delay: .17s; }.thinking-line i:nth-child(3) { animation-delay: .34s; }
 @keyframes pulse { 0%,100% { opacity: .25; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-4px); } }
 .ask-box { max-width: 860px; padding: 18px 20px 13px; border: 1px solid rgba(23,35,63,.32); background: var(--paper-bright); box-shadow: 8px 8px 0 rgba(34,52,93,.08); }
 .ask-box > label { display: block; margin-bottom: 8px; color: var(--vermilion); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
-.ask-settings { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin-bottom: 8px; }
-.ask-settings > label:first-child { color: var(--vermilion); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
-.ask-settings > label:last-child { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; font-weight: 700; }
-.ask-settings select { max-width: 190px; padding: 6px 8px; border: 1px solid var(--line); background: white; color: var(--indigo); font-size: 10px; }
+.ask-settings { margin-bottom: 8px; }
+.ask-settings > label { color: var(--vermilion); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
 .ask-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: stretch; }
 .ask-row textarea { width: 100%; resize: vertical; padding: 8px 4px; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 16px; line-height: 1.55; }
 .ask-row textarea::placeholder { color: #aaa89f; }
