@@ -95,5 +95,9 @@ test("declares durable knowledge storage and product metadata", async () => {
   assert.match(knowledge, /b\.relevance - a\.relevance/);
   assert.match(graph, /selectGraphEvidenceSources/);
   assert.match(graph, /source\.kind !== "document" \|\| source\.relevance >= documentThreshold/);
+  assert.match(graph, /BLOCKED_GRAPH_LABELS/);
+  assert.match(graph, /replace\(\/待探索\/g/);
+  assert.doesNotMatch(graph, /label: "平台證據不足"/);
+  assert.doesNotMatch(graph, /label: "待探索"/);
   assert.match(packageJson, /"name": "ketiengong-hakka-gpt"/);
 });
