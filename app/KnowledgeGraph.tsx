@@ -23,6 +23,7 @@ type Props = {
   graph: KnowledgeGraph | null;
   loading: boolean;
   expandingNodeId: string | null;
+  expandedNodeIds: readonly string[];
   onExpand: (node: KnowledgeGraphNode) => void;
 };
 
@@ -58,7 +59,8 @@ function shortLabel(value: string) {
   return value.length > 10 ? `${value.slice(0, 10)}…` : value;
 }
 
-export function KnowledgeGraphPanel({ graph, loading, expandingNodeId, onExpand }: Props) {
+export function KnowledgeGraphPanel({ graph, loading, expandingNodeId, expandedNodeIds, onExpand }: Props) {
+  const panelRef = useRef<HTMLElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const positionsRef = useRef(new Map<string, Point>());
   const pointerRef = useRef<PointerAction | null>(null);
@@ -66,10 +68,18 @@ export function KnowledgeGraphPanel({ graph, loading, expandingNodeId, onExpand 
   const [viewport, setViewport] = useState<Viewport>({ x: 210, y: 230, scale: 1 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const selectedNode = graph?.nodes.find((node) => node.id === selectedId)
     || graph?.nodes.find((node) => node.id === graph.rootId)
     || null;
   const activeSelectedId = selectedNode?.id || null;
+  const selectedExpanded = selectedNode ? expandedNodeIds.includes(selectedNode.id) : false;
+
+  useEffect(() => {
+    const updateFullscreenState = () => setIsFullscreen(document.fullscreenElement === panelRef.current);
+    document.addEventListener("fullscreenchange", updateFullscreenState);
+    return () => document.removeEventListener("fullscreenchange", updateFullscreenState);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -126,6 +136,16 @@ export function KnowledgeGraphPanel({ graph, loading, expandingNodeId, onExpand 
       scale,
     });
   }, [graph, size]);
+
+  async function toggleFullscreen() {
+    const panel = panelRef.current;
+    if (!panel) return;
+    if (document.fullscreenElement === panel) {
+      await document.exitFullscreen();
+    } else {
+      await panel.requestFullscreen();
+    }
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -344,7 +364,7 @@ export function KnowledgeGraphPanel({ graph, loading, expandingNodeId, onExpand 
       if (position) position.pinned = action.moved;
       if (!action.moved && graph) {
         const node = graph.nodes.find((item) => item.id === action.nodeId);
-        if (node) onExpand(node);
+        if (node && !expandedNodeIds.includes(node.id)) onExpand(node);
       }
     }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
@@ -362,7 +382,7 @@ export function KnowledgeGraphPanel({ graph, loading, expandingNodeId, onExpand 
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLCanvasElement>) {
-    if ((event.key === "Enter" || event.key === " ") && selectedNode) {
+    if ((event.key === "Enter" || event.key === " ") && selectedNode && !selectedExpanded) {
       event.preventDefault();
       onExpand(selectedNode);
     }
@@ -370,7 +390,7 @@ export function KnowledgeGraphPanel({ graph, loading, expandingNodeId, onExpand 
   }
 
   return (
-    <section className="graph-panel" aria-labelledby="knowledge-graph-title">
+    <section ref={panelRef} className="graph-panel" aria-labelledby="knowledge-graph-title">
       <header className="graph-head">
         <div>
           <span className="eyebrow">HAKKA KNOWLEDGE MAP</span>
@@ -406,6 +426,7 @@ export function KnowledgeGraphPanel({ graph, loading, expandingNodeId, onExpand 
         ) : null}
         <div className="graph-toolbar" aria-label="圖譜工具">
           <button type="button" onClick={fitGraph} disabled={!graph} title="顯示全部節點">置中</button>
+          <button type="button" onClick={toggleFullscreen}>{isFullscreen ? "退出全螢幕" : "全螢幕"}</button>
           <span>{Math.round(viewport.scale * 100)}%</span>
         </div>
         {expandingNodeId ? <div className="graph-expanding"><i />正在延伸圖講</div> : null}
@@ -415,12 +436,12 @@ export function KnowledgeGraphPanel({ graph, loading, expandingNodeId, onExpand 
         <div className="graph-selected">
           <div>
             <span style={{ backgroundColor: nodeColors[selectedNode.kind] }} />
-            <small>{kindLabels[selectedNode.kind]} · 第 {selectedNode.depth} 層</small>
+            <small>{kindLabels[selectedNode.kind]} · 第 {selectedNode.depth} 層{selectedExpanded ? " · 已展開" : ""}</small>
             <h3>{selectedNode.label}</h3>
             <p>{selectedNode.summary}</p>
           </div>
-          <button type="button" onClick={() => onExpand(selectedNode)} disabled={Boolean(expandingNodeId)}>
-            {expandingNodeId === selectedNode.id ? "延伸中" : "沿此節點展開"}
+          <button type="button" onClick={() => onExpand(selectedNode)} disabled={Boolean(expandingNodeId) || selectedExpanded}>
+            {selectedExpanded ? "已展開" : expandingNodeId === selectedNode.id ? "延伸中" : "沿此節點展開"}
           </button>
         </div>
       ) : (

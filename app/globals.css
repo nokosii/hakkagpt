@@ -143,6 +143,9 @@ main { min-height: calc(100vh - 72px); }
 .precedence-note li span { display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid rgba(255,255,255,.2); color: var(--sun); }
 
 .graph-panel { overflow: hidden; border: 1px solid rgba(242,180,77,.32); background: var(--deep); color: #f5efdf; box-shadow: 8px 8px 0 rgba(23,35,63,.08); }
+.graph-panel:fullscreen { width: 100vw; height: 100vh; display: grid; grid-template-rows: auto minmax(0,1fr) auto; border: 0; background: var(--deep); box-shadow: none; }
+.graph-panel:fullscreen .graph-stage { height: auto; min-height: 0; }
+.graph-panel:fullscreen .graph-selected { min-height: 118px; }
 .graph-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 18px 18px 14px; border-bottom: 1px solid rgba(255,255,255,.11); }
 .graph-head h2 { margin: 6px 0 0; font-family: "Noto Serif TC", serif; font-size: 24px; letter-spacing: .08em; }
 .graph-policy { display: block; margin-top: 4px; color: #8f9aaa; font-size: 8px; letter-spacing: .08em; }

@@ -208,6 +208,7 @@ export function HakkaPlatform() {
   const [graphRootQuestion, setGraphRootQuestion] = useState("");
   const [expandingNodeId, setExpandingNodeId] = useState<string | null>(null);
   const [graphExpansionCounts, setGraphExpansionCounts] = useState<Record<string, number>>({});
+  const graphExpansionLocksRef = useRef(new Set<string>());
   const [notice, setNotice] = useState("");
   const [adminEntries, setAdminEntries] = useState<AdminEntry[]>([]);
   const [adminDocuments, setAdminDocuments] = useState<AdminDocument[]>([]);
@@ -284,6 +285,7 @@ export function HakkaPlatform() {
     setKnowledgeGraph(null);
     setGraphRootQuestion(nextQuestion);
     setGraphExpansionCounts({});
+    graphExpansionLocksRef.current.clear();
     setGraphLoading(true);
     setMessages((current) => [...current, { role: "user", text: nextQuestion, dialect: selectedDialect }]);
     try {
@@ -316,8 +318,15 @@ export function HakkaPlatform() {
   }
 
   async function expandGraph(focus: KnowledgeGraphNode) {
-    if (!knowledgeGraph || expandingNodeId) return;
+    if (
+      !knowledgeGraph ||
+      expandingNodeId ||
+      graphExpansionCounts[focus.id] ||
+      graphExpansionLocksRef.current.has(focus.id)
+    ) return;
     const iteration = (graphExpansionCounts[focus.id] || 0) + 1;
+    graphExpansionLocksRef.current.add(focus.id);
+    let expansionSucceeded = false;
     setExpandingNodeId(focus.id);
     try {
       const response = await fetch("/api/graph", {
@@ -361,9 +370,11 @@ export function HakkaPlatform() {
         return { ...current, nodes, edges };
       });
       setGraphExpansionCounts((current) => ({ ...current, [focus.id]: iteration }));
+      expansionSucceeded = true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "圖譜延伸失敗，請稍後再試");
     } finally {
+      if (!expansionSucceeded) graphExpansionLocksRef.current.delete(focus.id);
       setExpandingNodeId(null);
     }
   }
@@ -749,6 +760,7 @@ export function HakkaPlatform() {
                   graph={knowledgeGraph}
                   loading={graphLoading}
                   expandingNodeId={expandingNodeId}
+                  expandedNodeIds={Object.keys(graphExpansionCounts)}
                   onExpand={expandGraph}
                 />
                 <div className="evidence-section">
