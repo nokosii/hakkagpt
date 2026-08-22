@@ -20,6 +20,20 @@ function asksForIdentifiableStyleImitation(question: string) {
   return creationIntent.test(question) && identifiableTarget.test(question);
 }
 
+function indicatesInsufficientPlatformEvidence(answer: string) {
+  return [
+    "平台證據不足",
+    "未包含任何",
+    "沒有提及",
+    "並無此項內容",
+    "無法回答此問題",
+    "無法回答這個問題",
+    "在無正確資料",
+    "沒有相關資料",
+    "找不到相關資料",
+  ].some((phrase) => answer.includes(phrase));
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as { question?: string };
@@ -58,6 +72,7 @@ export async function POST(request: Request) {
       "使用者不指定回答腔別。不得自行統一或指定腔別；只有引用資料本身明確標示腔別時，才在相應內容中說明該資料的腔別。資料未標示腔別時不要自行補上。",
       "只可把下列 RAG 資料稱為平台證據。每個由資料支持的重點，請在句末標示相應的〔資料 1〕格式。不得改寫來源作者、權利與腔別資訊。",
       "不得搜尋、蒐集或補充網路資料，只能使用下列平台 RAG 資料。不得捏造引文、出處、作者、腔別或文化細節，也不得把模型記憶假稱為檢索結果。",
+      `如果下列資料不能直接支持使用者問題，只能輸出固定句「${NO_PLATFORM_EVIDENCE}」，不可列出不相關來源，也不可解釋缺少哪些資料。`,
       "回答文學問題時可分析特徵與教學方法，但不得抄襲，也不得模仿可辨識作者的風格產生新作品。",
       "以下資料由本平台的社群治理型 RAG 檢索提供；暫行內容可先供查詢，但回答時須明確標示尚未通過技術適切性與文化安全雙閘門。",
       context || "",
@@ -72,7 +87,7 @@ export async function POST(request: Request) {
       }),
     ]);
     const cleanedAnswer = answer.replace(/\*/g, "").trim();
-    if (cleanedAnswer.includes("平台證據不足")) {
+    if (indicatesInsufficientPlatformEvidence(cleanedAnswer) || cleanedAnswer === NO_PLATFORM_EVIDENCE) {
       return Response.json({
         answer: NO_PLATFORM_EVIDENCE,
         sources: [],

@@ -134,7 +134,8 @@ test("declares durable knowledge storage and product metadata", async () => {
   assert.doesNotMatch(graph, /回答腔別/);
   assert.match(chatRoute, /不得搜尋、蒐集或補充網路資料/);
   assert.match(chatRoute, /只有引用資料本身明確標示腔別時/);
-  assert.match(chatRoute, /cleanedAnswer\.includes\("平台證據不足"\)/);
+  assert.match(chatRoute, /indicatesInsufficientPlatformEvidence/);
+  assert.match(chatRoute, /只能輸出固定句/);
   assert.match(unresolvedRoute, /accessLevel: "community"/);
   assert.match(packageJson, /"name": "ketiengong-hakka-gpt"/);
 });
