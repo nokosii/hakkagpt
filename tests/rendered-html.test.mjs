@@ -21,6 +21,8 @@ test("server-renders the 客天光 platform", async () => {
   assert.match(html, /客家GPT/);
   assert.match(html, /HakkaGPT：結合RAG與大型語言模型之客家知識AI專家對話系統/);
   assert.match(html, /知識治理/);
+  assert.match(html, /知識星脈/);
+  assert.match(html, /點選節點可產生下一層關聯/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/);
 });
 
@@ -42,6 +44,27 @@ test("blocks identifiable-author style imitation before calling the model", asyn
   assert.equal(data.evidenceState, "blocked");
   assert.match(data.safetyReason, /作者風格仿作防護/);
   assert.doesNotMatch(data.answer, /\*/);
+  assert.equal(data.graph.nodes.length, 4);
+  assert.equal(data.graph.edges.length, 3);
+  assert.equal(data.graph.rootId, data.graph.nodes[0].id);
+});
+
+test("validates graph expansion before calling the model", async () => {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("graph-validation", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+  const response = await worker.fetch(
+    new Request("http://localhost/api/graph", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ focus: { label: "缺少識別碼" }, rootQuestion: "測試問題" }),
+    }),
+    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
+    { waitUntil() {}, passThroughOnException() {} },
+  );
+  assert.equal(response.status, 400);
+  const data = await response.json();
+  assert.match(data.error, /格式不正確/);
 });
 
 test("declares durable knowledge storage and product metadata", async () => {

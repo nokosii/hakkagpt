@@ -1,6 +1,12 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { KnowledgeGraphPanel } from "@/app/KnowledgeGraph";
+import type {
+  KnowledgeGraph,
+  KnowledgeGraphEdge,
+  KnowledgeGraphNode,
+} from "@/lib/knowledge-graph";
 
 type View = "chat" | "contribute" | "upload" | "governance" | "admin";
 type Dialect = "未標示" | "四縣" | "海陸" | "大埔" | "饒平" | "詔安" | "南四縣";
@@ -33,6 +39,7 @@ type Source = {
 type ChatMessage = { role: "user" | "assistant"; text: string; sources?: Source[]; evidenceState?: string; dialect?: Dialect };
 type StatusData = {
   apiConnected: boolean;
+  graphEnabled?: boolean;
   entryCount: number;
   documentCount: number;
   pendingCount: number;
@@ -196,6 +203,11 @@ export function HakkaPlatform() {
   const [selectedDialect, setSelectedDialect] = useState<Dialect>("未標示");
   const [asking, setAsking] = useState(false);
   const [latestSources, setLatestSources] = useState<Source[]>([]);
+  const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeGraph | null>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [graphRootQuestion, setGraphRootQuestion] = useState("");
+  const [expandingNodeId, setExpandingNodeId] = useState<string | null>(null);
+  const [graphExpansionCounts, setGraphExpansionCounts] = useState<Record<string, number>>({});
   const [notice, setNotice] = useState("");
   const [adminEntries, setAdminEntries] = useState<AdminEntry[]>([]);
   const [adminDocuments, setAdminDocuments] = useState<AdminDocument[]>([]);
@@ -268,6 +280,11 @@ export function HakkaPlatform() {
     if (!nextQuestion || asking) return;
     setQuestion("");
     setAsking(true);
+    setLatestSources([]);
+    setKnowledgeGraph(null);
+    setGraphRootQuestion(nextQuestion);
+    setGraphExpansionCounts({});
+    setGraphLoading(true);
     setMessages((current) => [...current, { role: "user", text: nextQuestion, dialect: selectedDialect }]);
     try {
       const response = await fetch("/api/chat", {
@@ -275,10 +292,17 @@ export function HakkaPlatform() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: nextQuestion, dialect: selectedDialect }),
       });
-      const data = (await response.json()) as { answer?: string; sources?: Source[]; error?: string; evidenceState?: string };
+      const data = (await response.json()) as {
+        answer?: string;
+        sources?: Source[];
+        error?: string;
+        evidenceState?: string;
+        graph?: KnowledgeGraph;
+      };
       if (!response.ok || !data.answer) throw new Error(data.error || "查詢失敗");
       const sources = data.sources || [];
       setLatestSources(sources);
+      setKnowledgeGraph(data.graph || null);
       setMessages((current) => [...current, { role: "assistant", text: data.answer!, sources, evidenceState: data.evidenceState }]);
     } catch (error) {
       setMessages((current) => [
@@ -287,6 +311,60 @@ export function HakkaPlatform() {
       ]);
     } finally {
       setAsking(false);
+      setGraphLoading(false);
+    }
+  }
+
+  async function expandGraph(focus: KnowledgeGraphNode) {
+    if (!knowledgeGraph || expandingNodeId) return;
+    const iteration = (graphExpansionCounts[focus.id] || 0) + 1;
+    setExpandingNodeId(focus.id);
+    try {
+      const response = await fetch("/api/graph", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          focus,
+          rootQuestion: graphRootQuestion,
+          existingLabels: knowledgeGraph.nodes.map((node) => node.label),
+          dialect: focus.dialect,
+          iteration,
+        }),
+      });
+      const data = (await response.json()) as { nodes?: KnowledgeGraphNode[]; edges?: KnowledgeGraphEdge[]; error?: string };
+      if (!response.ok || !data.nodes?.length) throw new Error(data.error || "這個節點暫時無法繼續延伸");
+      setKnowledgeGraph((current) => {
+        if (!current) return current;
+        const nodes = [...current.nodes];
+        const labels = new Map(nodes.map((node) => [node.label.trim().toLocaleLowerCase("zh-Hant"), node.id]));
+        const remap = new Map<string, string>();
+        for (const node of data.nodes || []) {
+          const key = node.label.trim().toLocaleLowerCase("zh-Hant");
+          const existingId = labels.get(key);
+          if (existingId) {
+            remap.set(node.id, existingId);
+          } else {
+            labels.set(key, node.id);
+            remap.set(node.id, node.id);
+            nodes.push(node);
+          }
+        }
+        const nodeIds = new Set(nodes.map((node) => node.id));
+        const edges = [...current.edges];
+        for (const edge of data.edges || []) {
+          const source = remap.get(edge.source) || edge.source;
+          const target = remap.get(edge.target) || edge.target;
+          if (!nodeIds.has(source) || !nodeIds.has(target) || source === target) continue;
+          if (edges.some((item) => item.source === source && item.target === target && item.label === edge.label)) continue;
+          edges.push({ ...edge, source, target });
+        }
+        return { ...current, nodes, edges };
+      });
+      setGraphExpansionCounts((current) => ({ ...current, [focus.id]: iteration }));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "圖譜延伸失敗，請稍後再試");
+    } finally {
+      setExpandingNodeId(null);
     }
   }
 
@@ -667,35 +745,43 @@ export function HakkaPlatform() {
               </div>
 
               <aside className="evidence-rail">
-                <div className="rail-heading">
-                  <span className="eyebrow">RAG EVIDENCE</span>
-                  <h2>這次回答<br />參考了什麼</h2>
-                </div>
-                {latestSources.length ? latestSources.map((source, index) => (
-                  <article className="source-card" key={source.id}>
-                    <div className="source-top">
-                      <span>0{index + 1}</span>
-                      <b className={`source-status ${source.status}`}>{statusLabel(source.status)}</b>
-                    </div>
-                    <h3>{source.title}</h3>
-                    <div className="source-governance"><span>{source.dialect}腔</span><span>{source.rightsHolder}</span><span>{source.rightsBasis}</span></div>
-                    <p>{source.excerpt.slice(0, 118)}{source.excerpt.length > 118 ? "…" : ""}</p>
-                    <small className="source-license">{source.license} · {accessLabel(source.accessLevel)}</small>
-                    {source.sourceUrl ? <a href={source.sourceUrl} target="_blank" rel="noreferrer">查看原始來源 ↗</a> : null}
-                  </article>
-                )) : (
-                  <div className="rail-empty">
-                    <span aria-hidden="true">⌁</span>
-                    <p>送出問題後，這裡會列出命中的共編詞條與匯入文件。</p>
+                <KnowledgeGraphPanel
+                  graph={knowledgeGraph}
+                  loading={graphLoading}
+                  expandingNodeId={expandingNodeId}
+                  onExpand={expandGraph}
+                />
+                <div className="evidence-section">
+                  <div className="rail-heading">
+                    <span className="eyebrow">RAG EVIDENCE</span>
+                    <h2>這次回答參考了什麼</h2>
                   </div>
-                )}
-                <div className="precedence-note">
-                  <b>查詢優先規則</b>
-                  <ol>
-                    <li><span>1</span>只取公開存取層</li>
-                    <li><span>2</span>優先相同腔別證據</li>
-                    <li><span>3</span>揭露來源與審查狀態</li>
-                  </ol>
+                  {latestSources.length ? latestSources.map((source, index) => (
+                    <article className="source-card" key={source.id}>
+                      <div className="source-top">
+                        <span>0{index + 1}</span>
+                        <b className={`source-status ${source.status}`}>{statusLabel(source.status)}</b>
+                      </div>
+                      <h3>{source.title}</h3>
+                      <div className="source-governance"><span>{source.dialect}腔</span><span>{source.rightsHolder}</span><span>{source.rightsBasis}</span></div>
+                      <p>{source.excerpt.slice(0, 118)}{source.excerpt.length > 118 ? "…" : ""}</p>
+                      <small className="source-license">{source.license} · {accessLabel(source.accessLevel)}</small>
+                      {source.sourceUrl ? <a href={source.sourceUrl} target="_blank" rel="noreferrer">查看原始來源 ↗</a> : null}
+                    </article>
+                  )) : (
+                    <div className="rail-empty">
+                      <span aria-hidden="true">⌁</span>
+                      <p>送出問題後，這裡會列出命中的共編詞條與匯入文件。</p>
+                    </div>
+                  )}
+                  <div className="precedence-note">
+                    <b>查詢優先規則</b>
+                    <ol>
+                      <li><span>1</span>只取公開存取層</li>
+                      <li><span>2</span>優先相同腔別證據</li>
+                      <li><span>3</span>揭露來源與審查狀態</li>
+                    </ol>
+                  </div>
                 </div>
               </aside>
             </section>

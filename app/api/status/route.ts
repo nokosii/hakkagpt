@@ -79,6 +79,7 @@ export async function GET(request: Request) {
   const r2Connected = Boolean(platformEnv.KNOWLEDGE_FILES);
   return Response.json({
     apiConnected: Boolean(platformEnv.HAKKAGPT_API_TOKEN),
+    graphEnabled: true,
     entryCount,
     documentCount: Math.max(localDocumentCount, driveDocumentCount),
     pendingCount,

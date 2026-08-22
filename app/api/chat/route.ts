@@ -1,6 +1,10 @@
 import { askHakkaGpt } from "@/lib/hakkagpt";
 import { retrieveKnowledge } from "@/lib/knowledge";
 import { DIALECTS, type DialectTag } from "@/lib/governance";
+import {
+  buildBlockedKnowledgeGraph,
+  generateInitialKnowledgeGraph,
+} from "@/lib/knowledge-graph";
 
 export const runtime = "edge";
 
@@ -31,6 +35,7 @@ export async function POST(request: Request) {
         sources: [],
         evidenceState: "blocked",
         safetyReason: "可辨識作者風格仿作防護",
+        graph: buildBlockedKnowledgeGraph(question, dialect || "未指定"),
       });
     }
 
@@ -54,12 +59,21 @@ export async function POST(request: Request) {
       context || "",
       `使用者問題：${question}`,
     ].filter(Boolean).join("\n\n");
-    const answer = await askHakkaGpt(prompt);
+    const [answer, graph] = await Promise.all([
+      askHakkaGpt(prompt),
+      generateInitialKnowledgeGraph({
+        question,
+        sources,
+        context,
+        dialect: dialect || "未指定",
+      }),
+    ]);
     return Response.json({
       answer: answer.replace(/\*/g, "").trim(),
       sources,
       evidenceState,
       dialect: dialect || "未指定",
+      graph,
     });
   } catch (error) {
     return Response.json(
