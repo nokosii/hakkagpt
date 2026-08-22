@@ -23,11 +23,13 @@ function indicatesInsufficientPlatformEvidence(answer: string) {
     "未包含任何",
     "沒有提及",
     "並無此項內容",
+    "並無關於",
     "無法回答此問題",
     "無法回答這個問題",
     "在無正確資料",
     "沒有相關資料",
     "找不到相關資料",
+    "無相關紀錄或資料",
   ].some((phrase) => answer.includes(phrase));
 }
 

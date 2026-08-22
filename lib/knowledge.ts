@@ -88,7 +88,7 @@ function minimumRelevance(question: string) {
   const compactLength = question.replace(/[\p{P}\p{S}\s]/gu, "").length;
   if (compactLength <= 3) return 1;
   if (compactLength <= 7) return 2;
-  return 3;
+  return 5;
 }
 
 function dialectScore(sourceDialect: DialectTag, selectedDialect?: DialectTag) {

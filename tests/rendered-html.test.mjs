@@ -99,6 +99,7 @@ test("declares durable knowledge storage and product metadata", async () => {
   assert.match(graphComponent, /expandedNodeIds\.includes/);
   assert.match(graphComponent, /已展開/);
   assert.match(knowledge, /source\.relevance >= minimumRelevance\(question\)/);
+  assert.match(knowledge, /return 5;/);
   assert.match(knowledge, /b\.relevance - a\.relevance/);
   assert.match(graph, /selectGraphEvidenceSources/);
   assert.match(graph, /source\.kind !== "document" \|\| source\.relevance >= documentThreshold/);
