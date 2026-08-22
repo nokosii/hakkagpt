@@ -313,7 +313,7 @@ export function HakkaPlatform() {
         text: data.answer!,
         sources,
         evidenceState: data.evidenceState,
-        unresolvedQuestion: data.evidenceState === "unresolved" ? nextQuestion : undefined,
+        unresolvedQuestion: data.evidenceState === "model-only" ? nextQuestion : undefined,
       }]);
     } catch (error) {
       setMessages((current) => [
@@ -750,11 +750,11 @@ export function HakkaPlatform() {
                       <div className="message-meta">
                         <span>{message.role === "assistant" ? "客天光" : "你"}</span>
                         {message.role === "assistant" ? (
-                          <small>{message.evidenceState === "grounded" ? "HakkaGPT + 公開證據" : message.evidenceState === "blocked" ? "文學誠信防護" : message.evidenceState === "unresolved" ? "平台尚無相關資料" : "HakkaGPT 一般回答"}</small>
+                          <small>{message.evidenceState === "grounded" ? "HakkaGPT + 公開證據" : message.evidenceState === "blocked" ? "文學誠信防護" : message.evidenceState === "model-only" ? "平台證據不足 · HakkaGPT 回答" : "HakkaGPT 一般回答"}</small>
                         ) : <small>提問</small>}
                       </div>
                       <div className="message-body">{message.text}</div>
-                      {message.evidenceState === "unresolved" && message.unresolvedQuestion ? (
+                      {message.evidenceState === "model-only" && message.unresolvedQuestion ? (
                         <div className="unresolved-followup">
                           <label>
                             <input
@@ -764,7 +764,7 @@ export function HakkaPlatform() {
                             />
                             本題確實與客家相關
                           </label>
-                          <p>確認後可自行提供問題與解答，或列入待解清單。不會蒐集網路資料。</p>
+                          <p>確認後可自行提供問題與解答，或列入待解清單，協助補足平台知識。</p>
                           <div>
                             <button
                               type="button"

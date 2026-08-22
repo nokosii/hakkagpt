@@ -69,27 +69,6 @@ test("validates graph expansion before calling the model", async () => {
   assert.match(data.error, /格式不正確/);
 });
 
-test("returns a fixed unresolved response without model or internet fallback", async () => {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("unresolved-response", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
-  const response = await worker.fetch(
-    new Request("http://localhost/api/chat", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ question: "完全沒有平台資料的測試問題" }),
-    }),
-    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
-    { waitUntil() {}, passThroughOnException() {} },
-  );
-  assert.equal(response.status, 200);
-  const data = await response.json();
-  assert.equal(data.answer, "本提問與客家無涉或是本系統尚未收集相關資料。不需蒐集網路資料。");
-  assert.equal(data.evidenceState, "unresolved");
-  assert.equal(data.sources.length, 0);
-  assert.equal(data.graph.nodes.length, 1);
-});
-
 test("declares durable knowledge storage and product metadata", async () => {
   const [hosting, layout, page, platform, graphComponent, knowledge, graph, chatRoute, unresolvedRoute, packageJson] = await Promise.all([
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
@@ -115,7 +94,7 @@ test("declares durable knowledge storage and product metadata", async () => {
   assert.match(platform, /本題確實與客家相關/);
   assert.match(platform, /自行編寫問題及解答/);
   assert.match(platform, /列為待解決之客家相關問題/);
-  assert.match(platform, /平台尚無相關資料/);
+  assert.match(platform, /平台證據不足 · HakkaGPT 回答/);
   assert.match(graphComponent, /requestFullscreen/);
   assert.match(graphComponent, /expandedNodeIds\.includes/);
   assert.match(graphComponent, /已展開/);
@@ -132,10 +111,13 @@ test("declares durable knowledge storage and product metadata", async () => {
   assert.doesNotMatch(graph, /label: "支持"/);
   assert.match(graph, /不得建立資料來源、文件、RAG 證據或引用節點/);
   assert.doesNotMatch(graph, /回答腔別/);
-  assert.match(chatRoute, /不得搜尋、蒐集或補充網路資料/);
+  assert.doesNotMatch(chatRoute, /不得搜尋、蒐集或補充網路資料/);
+  assert.doesNotMatch(chatRoute, /本提問與客家無涉或是本系統尚未收集相關資料/);
   assert.match(chatRoute, /只有引用資料本身明確標示腔別時/);
   assert.match(chatRoute, /indicatesInsufficientPlatformEvidence/);
-  assert.match(chatRoute, /只能輸出固定句/);
+  assert.match(chatRoute, /仍須使用 HakkaGPT API 自身可用的知識與檢索能力回答/);
+  assert.match(chatRoute, /platformEvidenceInsufficient \? "model-only"/);
+  assert.doesNotMatch(chatRoute, /if \(!sources\.length\) \{\s*return Response\.json/);
   assert.match(unresolvedRoute, /accessLevel: "community"/);
   assert.match(packageJson, /"name": "ketiengong-hakka-gpt"/);
 });

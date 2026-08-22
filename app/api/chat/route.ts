@@ -2,13 +2,10 @@ import { askHakkaGpt } from "@/lib/hakkagpt";
 import { retrieveKnowledge } from "@/lib/knowledge";
 import {
   buildBlockedKnowledgeGraph,
-  buildFallbackKnowledgeGraph,
   generateInitialKnowledgeGraph,
 } from "@/lib/knowledge-graph";
 
 export const runtime = "edge";
-
-const NO_PLATFORM_EVIDENCE = "本提問與客家無涉或是本系統尚未收集相關資料。不需蒐集網路資料。";
 
 function explicitlyRequestsHakkaRomanization(question: string) {
   return /客語拼音|拼音|羅馬字|標音|讀音|發音|怎麼唸|怎麼讀|仰般讀|聲調|腔調拼音/i.test(question);
@@ -53,15 +50,6 @@ export async function POST(request: Request) {
     }
 
     const { sources, context, evidenceState } = await retrieveKnowledge(question);
-    if (!sources.length) {
-      return Response.json({
-        answer: NO_PLATFORM_EVIDENCE,
-        sources: [],
-        evidenceState: "unresolved",
-        graph: buildFallbackKnowledgeGraph(question, "未標示"),
-      });
-    }
-
     const romanizationRequested = explicitlyRequestsHakkaRomanization(question);
     const prompt = [
       "你是『客天光・客家GPT』的客家知識專家。請直接回答使用者問題。",
@@ -70,11 +58,11 @@ export async function POST(request: Request) {
         ? "使用者已明確要求客語拼音或發音，本題可以清楚分列客語拼音。"
         : "使用者未要求客語拼音，本題禁止列出客語拼音、羅馬字或聲調標記。",
       "使用者不指定回答腔別。不得自行統一或指定腔別；只有引用資料本身明確標示腔別時，才在相應內容中說明該資料的腔別。資料未標示腔別時不要自行補上。",
-      "只可把下列 RAG 資料稱為平台證據。每個由資料支持的重點，請在句末標示相應的〔資料 1〕格式。不得改寫來源作者、權利與腔別資訊。",
-      "不得搜尋、蒐集或補充網路資料，只能使用下列平台 RAG 資料。不得捏造引文、出處、作者、腔別或文化細節，也不得把模型記憶假稱為檢索結果。",
-      `如果下列資料不能直接支持使用者問題，只能輸出固定句「${NO_PLATFORM_EVIDENCE}」，不可列出不相關來源，也不可解釋缺少哪些資料。`,
+      "只可把下列 RAG 資料稱為本平台證據。每個由平台資料支持的重點，請在句末標示相應的〔資料 1〕格式。不得改寫來源作者、權利與腔別資訊。HakkaGPT 自身知識或檢索結果不可標成平台資料。",
       "回答文學問題時可分析特徵與教學方法，但不得抄襲，也不得模仿可辨識作者的風格產生新作品。",
-      "以下資料由本平台的社群治理型 RAG 檢索提供；暫行內容可先供查詢，但回答時須明確標示尚未通過技術適切性與文化安全雙閘門。",
+      context
+        ? "以下資料由本平台的社群治理型 RAG 檢索提供；暫行內容可先供查詢，但回答時須明確標示尚未通過技術適切性與文化安全雙閘門。"
+        : "本題沒有命中本平台 RAG 資料。仍須使用 HakkaGPT API 自身可用的知識與檢索能力回答，但回答開頭必須先寫「平台證據不足。」；這只表示本平台尚無可引用資料，不代表停止回答。",
       context || "",
       `使用者問題：${question}`,
     ].filter(Boolean).join("\n\n");
@@ -87,18 +75,14 @@ export async function POST(request: Request) {
       }),
     ]);
     const cleanedAnswer = answer.replace(/\*/g, "").trim();
-    if (indicatesInsufficientPlatformEvidence(cleanedAnswer) || cleanedAnswer === NO_PLATFORM_EVIDENCE) {
-      return Response.json({
-        answer: NO_PLATFORM_EVIDENCE,
-        sources: [],
-        evidenceState: "unresolved",
-        graph: buildFallbackKnowledgeGraph(question, "未標示"),
-      });
-    }
+    const platformEvidenceInsufficient = !sources.length || indicatesInsufficientPlatformEvidence(cleanedAnswer);
+    const finalAnswer = platformEvidenceInsufficient && !cleanedAnswer.startsWith("平台證據不足")
+      ? `平台證據不足。\n\n${cleanedAnswer}`
+      : cleanedAnswer;
     return Response.json({
-      answer: cleanedAnswer,
-      sources,
-      evidenceState,
+      answer: finalAnswer,
+      sources: platformEvidenceInsufficient ? [] : sources,
+      evidenceState: platformEvidenceInsufficient ? "model-only" : evidenceState,
       graph,
     });
   } catch (error) {
